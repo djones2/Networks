@@ -1,0 +1,26 @@
+./trace ARPTest.pcap > myOut
+diff myOut ARPTest.pcap.out 
+
+./trace Http.pcap > myOut
+diff myOut Http.pcap.out 
+
+./trace IP_bad_checksum.pcap > myOut
+diff myOut IP_bad_checksum.pcap.out 
+
+./trace smallTCP.pcap > myOut
+diff myOut smallTCP.pcap.out 
+
+./trace PingTest.pcap > myOut
+diff myOut PingTest.pcap.out 
+
+./trace mix_withIPoptions.pcap > myOut
+diff myOut mix_withIPoptions.pcap.out 
+
+./trace largeMix.pcap > myOut
+diff myOut largeMix.pcap.out 
+
+./trace largeMix2.pcap > myOut
+diff myOut largeMix2.pcap.out 
+
+./trace UDPfile.pcap > myOut
+diff myOut UDPfile.pcap.out 

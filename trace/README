@@ -1,0 +1,12 @@
+Program 1 - Trace
+
+Daniel Jones
+
+CPE 464 - 9:00 AM Lab Section
+
+Use "make" to compile the files into an executable called "trace". 
+Call "./trace <.pcap file>" to run the program with a provided packet capture file.
+Additional packet captures from home network titled "sample1.pcap" and "sample2.pcap" are provided.
+
+Only functionality issue is the eliminating the leading 0 from the IP checksum value. All
+other specifications are assumed to have been met.
