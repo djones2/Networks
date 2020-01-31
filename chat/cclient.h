@@ -49,5 +49,6 @@ typedef struct client {
 
 void sendToServer(int socketNum);
 void checkArgs(int argc, char * argv[]);
+client initClient(int socket, char *handle);
 
 #endif

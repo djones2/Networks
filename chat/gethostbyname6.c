@@ -53,7 +53,7 @@ uint8_t * getIPAddress6(const char * hostName, struct sockaddr_in6 * aSockaddr6)
 	memset(&hints,0,sizeof(hints));
 	hints.ai_flags = AI_V4MAPPED | AI_ALL;
 	hints.ai_family = AF_INET6;
-	
+
 	if ((addrError = getaddrinfo(hostName, NULL, &hints, &hostInfo)) != 0)
 	{
 		fprintf(stderr, "Error getaddrinfo (host: %s): %s\n", hostName, gai_strerror(addrError));
