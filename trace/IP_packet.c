@@ -84,13 +84,20 @@ void print_IP_packet(IP_packet *packet)
     /* Checksum */
     checksum1 = ntohs(((u_int16_t *)packet->frame)[5]);
     temp = checksum1 >> 8;
-    if (packet->checksum)
+    if ((u_int8_t)checksum1 == 0) {
+        if (packet->checksum) {
+        printf("\n\t\tChecksum: Incorrect (0x%02x)", temp);
+        } else {
+        printf("\n\t\tChecksum: Correct (0x%02x)", temp);
+        }
+    }
+    else if (packet->checksum)
     {
-        printf("\n\t\tChecksum: Incorrect (0x%02x%02x)", ((u_int8_t)checksum1), temp);
+        printf("\n\t\tChecksum: Incorrect (0x%x%02x)", ((u_int8_t)checksum1), temp);
     }
     else
     {
-        printf("\n\t\tChecksum: Correct (0x%01x%02x)", ((u_int8_t)checksum1), temp);
+        printf("\n\t\tChecksum: Correct (0x%x%02x)", ((u_int8_t)checksum1), temp);
     }
 
     printf("\n\t\tSender IP: ");
