@@ -33,20 +33,14 @@ int main(int argc, char *argv[])
 	int portNumber = 0;
 	
 	portNumber = checkArgs(argc, argv);
-	
 	//create the server socket
 	serverSocket = tcpServerSetup(portNumber);
-
 	// wait for client to connect
 	clientSocket = tcpAccept(serverSocket, DEBUG_FLAG);
-
 	recvFromClient(clientSocket);
-	
 	/* close the sockets */
 	close(clientSocket);
-	close(serverSocket);
-
-	
+	close(serverSocket);	
 	return 0;
 }
 

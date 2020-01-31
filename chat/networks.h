@@ -9,12 +9,21 @@
 
 #define BACKLOG 10
 
+/* A pseudo-hashmap that stores the open
+	connections in a network. */
+typedef struct socket_handle_map {
+	int socket_number;
+	char handle[100];
+	struct socket_handle_map *next;
+} socket_handle_map;
+
 // for the server side
 int tcpServerSetup(int portNumber);
 int tcpAccept(int server_socket, int debugFlag);
 
 // for the client side
 int tcpClientSetup(char * serverName, char * port, int debugFlag);
+
 
 
 #endif
