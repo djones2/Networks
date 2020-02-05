@@ -1,28 +1,18 @@
 # Makefile for CPE464 tcp test code
 # written by Hugh Smith - April 2019
+# Adapted for C++ compilation by 
+# Daniel Jones - February 2020
 
-CC= gcc
-CFLAGS= -g -Wall
-LIBS = 
+COMPILER = g++
+FLAGS = -Wall -Werror
 
+all:  cclient server
 
-all:   cclient server
+cclient: cclient.cpp message.h message.cpp cclientMain.cpp cclient.h
+	$(COMPILER) $(FLAGS) cclient.cpp cclientMain.cpp message.cpp -o cclient
 
-cclient: cclient.c networks.o gethostbyname6.o
-	$(CC) $(CFLAGS) -o cclient cclient.c networks.o gethostbyname6.o $(LIBS)
-
-server: server.c networks.o gethostbyname6.o
-	$(CC) $(CFLAGS) -o server server.c networks.o gethostbyname6.o $(LIBS)
-
-.c.o:
-	gcc -c $(CFLAGS) $< -o $@ $(LIBS)
-
-cleano:
-	rm -f *.o
-
+server: serverMain.cpp server.cpp server.h serverMain.cpp message.h message.cpp
+	$(COMPILER) $(FLAGS) server.cpp serverMain.cpp message.cpp -o server
+	
 clean:
-	rm -f server client *.o
-
-
-
-
+	rm cclient server
