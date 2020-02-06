@@ -1,6 +1,9 @@
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <cerrno>
 #include <iostream>
 #include <sstream>
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -8,502 +11,584 @@
 #include <unistd.h>
 #include <netinet/in.h>
 #include <netdb.h>
-
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <cerrno>
-
 #include "server.h"
 #include "message.h"
 
-#define MAXBUF 1024
-
 using namespace std;
 
-/*
- *	 Lifecycle Functions
- */ 
-
-Server::Server(int argc, char **argv) {
+/* Create server instance on port */
+Server::Server(int argc, char **argv)
+{
 	port = 0;
-
-	if (argc == 2)
-		stringstream(argv[1]) >> port;
-	else
+	if (argc != 2)
+	{
 		port = 0;
+	}
+	else if (argc == 2)
+	{
+		stringstream(argv[1]) >> port;
+	}
 }
 
-void Server::setup() {
+/* Populate server attributes */
+void Server::setup()
+{
 	socklen_t address_length;
-	
-	answering_machine = socket(AF_INET, SOCK_STREAM, 0);
+	socketNum = socket(AF_INET, SOCK_STREAM, 0);
 	sequence_number = 0;
-	
-	if (answering_machine == -1)
-		throw SOCK_EX;
+
+	if (socketNum == GEN_ERROR)
+	{
+		throw CLIENT_NAME_ERROR;
+	}
 
 	address.sin_family = AF_INET;
 	address.sin_addr.s_addr = htonl(INADDR_ANY);
 	address.sin_port = htons(port);
 
-	if (bind(answering_machine, (const sockaddr*)&address, sizeof(address)) == -1)
-		throw BIND_EX;
-
-	if (listen(answering_machine, 10) == -1)
+	if (listen(socketNum, 10) == GEN_ERROR)
+	{
 		throw LISTEN_EX;
+	}
 
 	address_length = sizeof(address);
 
-	if (getsockname(answering_machine, (struct sockaddr*)&address, &address_length) == -1)
+	if (getsockname(socketNum, (struct sockaddr *)&address, &address_length) == GEN_ERROR)
+	{
 		throw PORT_EX;
-		
+	}
+
 	if (port == 0)
-		printf("Server is using port %d\n", ntohs(address.sin_port));
+	{
+		printf("Server on port %d\n", ntohs(address.sin_port));
+	}
 
-	highest_fd = answering_machine;
-
+	capacity = MAXBUF;
 	num_open = 0;
 	num_clients = 0;
-	
-	capacity = MAXBUF;
-	open_sockets = (int *) calloc(capacity, sizeof(int));
-	clients = (char **) calloc(capacity, sizeof(char *));
+	highest_fd = socketNum;
+	socketTable = (int *)calloc(capacity, sizeof(int));
+	clientTable = (char **)calloc(capacity, sizeof(char *));
 }
 
-void Server::serve() {	
-	// service loop
-	while(true) {
-		
-		//setup 
+/* Live server call, includes (not) busy week */
+void Server::liveServer()
+{
+	while (1)
+	{
+		int i;
 		FD_ZERO(&read_set);
+		/* Set time for select call */
 		wait_time.tv_sec = 1;
 		wait_time.tv_usec = 1000;
-	
-		FD_SET(answering_machine, &read_set);
-		for (int i = 0; i < num_open; i++) {
-			current_socket = open_sockets[i];
-			FD_SET(current_socket, &read_set);
+		FD_SET(socketNum, &read_set);
+		for (i = 0; i < num_open; i++)
+		{
+			currentClientSocket = socketTable[i];
+			FD_SET(currentClientSocket, &read_set);
 		}
-	
-		//select
-		if (select(highest_fd + 1, &read_set, NULL, NULL, &wait_time) == -1)
-			throw SELECT_EX;
-		
-		//set up new connection
-		if (FD_ISSET(answering_machine, &read_set))
-			answer();
 
-		//handle client traffic
-		for (int i = 0; i < num_open; i++) {
-			current_socket = open_sockets[i];
-			if (FD_ISSET(current_socket, &read_set)) {
-				//receive from a client
-				process_packet(current_socket);
+		if (select(highest_fd + 1, &read_set, NULL, NULL, &wait_time) == GEN_ERROR)
+		{
+			throw SELECT_EX;
+		}
+
+		/* Create new connection on open socket */
+		if (FD_ISSET(socketNum, &read_set))
+		{
+			answer();
+		}
+
+		/* Handle client traffic across socket table */
+		for (i = 0; i < num_open; i++)
+		{
+			currentClientSocket = socketTable[i];
+			if (FD_ISSET(currentClientSocket, &read_set))
+			{
+				process_packet(currentClientSocket);
 			}
 		}
 	}
 }
 
-void Server::shutdown() {
-	
-}
-
-/*
- *	 Packet Processing Functions
- */ 
- 
-void Server::process_packet(int fd) {
+/* Process incoming packets */
+void Server::process_packet(int fd)
+{
 	uint8_t buffer[MAXBUF];
-	int message_size, flag;
-	Message *msg;
+	int flag;
+	Message *messagePacket;
 
-	message_size = recv(fd, buffer, MAXBUF, 0);
+	int message_size = recv(fd, buffer, MAXBUF, 0);
 
-	if (message_size) {
-		
-		msg = new Message(buffer, message_size);
-		msg->print();
-		flag = msg->get_flag();
-		
-		if (flag == 1) 
-			initial_packet(fd, msg);
-		else if (flag == 6) {
-			message_packet(fd, msg, message_size);
+	if (message_size)
+	{
+		messagePacket = new Message(buffer, message_size);
+		messagePacket->print();
+		flag = messagePacket->get_flag();
+
+		if (flag == INITIAL_PCKT)
+		{
+			initial_packet(fd, messagePacket);
 		}
-		else if (flag == 8) {
-			exit_response(fd);
+		else if (flag == MESSAGE_PCKT)
+		{
+			message_packet(fd, messagePacket, message_size);
 		}
-		else if (flag == 10) {
-			list_length_response(fd);
+		else if (flag == EXIT_REPLY)
+		{
+			exitResponse(fd);
 		}
-		else if (flag == 12) {
-			try {
-				handle_request_response(fd, msg);
+		else if (flag == HANDLE_LIST_REQUEST)
+		{
+			listCommandLength(fd);
+		}
+		else if (flag == HANDLE_LIST_LEN)
+		{
+			try
+			{
+				requestResponse(fd, messagePacket);
 			}
-			catch (int ex) {
+			catch (int ex)
+			{
 				if (ex == LIST_EX)
-					bad_handle_request_response(fd, msg);
+					invalidHandleRequest(fd, messagePacket);
 				else
 					throw ex;
 			}
 		}
-		
-		
-		delete msg;
+
+		delete messagePacket;
 	}
-	// Connection closed externally
-	else {
-		//printf("Cclient dropped!\n");
+	/* Control-C on one side */
+	else
+	{
 		close_connection(fd);
 	}
-	
 }
 
-void Server::initial_packet(int fd, Message *msg) {
-	try {
-		learn_handle(fd, msg->get_from(), msg->get_from_length());
-		handleCheck(msg->get_from(), msg->get_from_length());
+/* Serving initial packet */
+void Server::initial_packet(int fd, Message *messagePacket)
+{
+	try
+	{
+		learn_handle(fd, messagePacket->getSource(), messagePacket->get_from_length());
+		handleCheck(messagePacket->getSource(), messagePacket->get_from_length());
 	}
-	catch (int ex) {
-		if (ex == HANDLE_EX) {
-			//printf("Handle is null or already exists\n");
-			bad_handle_response(fd, msg->get_from(), msg->get_from_length());
+	catch (int ex)
+	{
+		if (ex == HANDLE_EX)
+		{
+			badHandle(fd, messagePacket->getSource(), messagePacket->get_from_length());
 		}
-		else 
-			printf("Caught exception %d while learning/confirming handle\n", ex);
 	}
 }
 
-void Server::message_packet(int fd, Message *msg, int msg_size) {
-	int route;
-	
-	try {
-		if (msg->get_to_length() == 0) {
-			broadcast(msg, msg_size);
+/* Serving message packet forwarding */
+void Server::message_packet(int fd, Message *messagePacket, int payloadLen)
+{
+	try
+	{
+		if (messagePacket->get_to_length() == 0)
+		{
+			broadcast(messagePacket, payloadLen);
 		}
-		else {
-			route = find_by_handle(msg->get_to(), msg->get_to_length());
-			if (send(route, msg->sendable(), msg_size, 0) == -1)
-				throw SEND_EX;
+		else
+		{
+			int route = fdByHandle(messagePacket->get_to(), messagePacket->get_to_length());
+			/* send() call */
+			if (send(route, messagePacket->sendable(), payloadLen, 0) == GEN_ERROR)
+				throw SEND_FAIL;
 		}
 	}
-	catch (int ex) {
-		if (ex == HANDLE_EX) {
-			bad_destination_response(fd, msg->get_to(), msg->get_to_length());
+	catch (int ex)
+	{
+		if (ex == HANDLE_EX)
+		{
+			invalidDestination(fd, messagePacket->get_to(), messagePacket->get_to_length());
 		}
 		else
 			throw ex;
 	}
 }
 
-/*
- *	 Workflow Functions
- */ 
-
-void Server::answer() {
+/* Answer the initial packet of a client, add to socket and
+	client tables */
+void Server::answer()
+{
 	resize();
-	
-	open_sockets[num_open] = accept(answering_machine, NULL, 0);
-	clients[num_open] = (char *) calloc(1, sizeof(char));
-	
-	if (open_sockets[num_open] == -1)
+	socketTable[num_open] = accept(socketNum, NULL, 0);
+	clientTable[num_open] = (char *)calloc(1, sizeof(char));
+	if (socketTable[num_open] == GEN_ERROR)
+	{
 		throw ACCEPT_EX;
-		
-	if (open_sockets[num_open] > highest_fd)
-		highest_fd = open_sockets[num_open];
-		
-	num_open++;
-	num_clients++;
-}
-
-void Server::learn_handle(int fd, char *handle, int length) {
-	int index = 0;
-	
-	for (int i = 0; i < num_open; i++) 
-		if (open_sockets[i] == fd)
-			index = i;
-	
-	if (handle[0] == '\0' || handle_exists(handle, length)) {
-		throw HANDLE_EX;
-	}	
-	
-	if (clients[index] != NULL) {
-		free(clients[index]);
-		clients[index] = NULL;
 	}
-		
-	clients[index] = (char *) calloc(length + 1, sizeof(char));
-	memcpy(clients[index], handle, length);
-	clients[index][length] = '\0';
+	if (socketTable[num_open] > highest_fd)
+	{
+		highest_fd = socketTable[num_open];
+	}
+	num_clients++;
+	num_open++;
+}
+/* Add handle to client table */
+void Server::learn_handle(int fd, char *handle, int length)
+{
+	int index = 0;
+	int i;
+	/* Find file descriptor in socket table */
+	for (i = 0; i < num_open; i++)
+	{
+		if (socketTable[i] == fd)
+		{
+			index = i;
+		}
+	}
+	/* Check if client table is available.
+		If not, overwrite */
+	if (clientTable[index] != NULL)
+	{
+		free(clientTable[index]);
+		clientTable[index] = NULL;
+	}
+	/* See if handle is valid */
+	if (handle[0] == '\0' || findHandle(handle, length))
+	{
+		throw HANDLE_EX;
+	}
+	/* Arithmetic for client table */
+	clientTable[index] = (char *)calloc(length + 1, sizeof(char));
+	memcpy(clientTable[index], handle, length);
+	clientTable[index][length] = '\0';
 }
 
-void Server::broadcast(Message *msg, int msg_size) {
+/* Broadcast command */
+void Server::broadcast(Message *messagePacket, int payloadLen)
+{
+	/* Get lendth and handle for sender */
+	int length = messagePacket->get_from_length();
 	char *sender;
-	int length;
-	
-	length = msg->get_from_length();
-	
-	sender = (char *) calloc(length + 1, sizeof(char));
-	memcpy(sender, msg->get_from(), length);
+	sender = (char *)calloc(length + 1, sizeof(char));
+	memcpy(sender, messagePacket->getSource(), length);
 	sender[length] = '\0';
 
+	/* Send message to all client in client table */
 	for (int i = 0; i < num_open; i++)
-		if (strcmp(sender, clients[i]) != 0)
-			if (send(open_sockets[i], msg->sendable(), msg_size, 0) == -1)
-				throw SEND_EX; 
+	{
+		if (strcmp(sender, clientTable[i]) != 0)
+		{
+			if (send(socketTable[i], messagePacket->sendable(), payloadLen, 0) == GEN_ERROR)
+			{
+				throw SEND_FAIL;
+			}
+		}
+	}
 }
 
-void Server::close_connection(int fd) {
+/* Close server connection with client via file descriptor */
+void Server::close_connection(int fd)
+{
 	close(fd);
-	int i;
 	int index = 0;
-	for (i = 0; i < num_open; i++) {
-		if (open_sockets[i] == fd) {
+	/* Fine socket value in socket table */
+	for (int i = 0; i < num_open; i++)
+	{
+		if (socketTable[i] == fd)
+		{
 			index = i;
 			break;
 		}
 	}
-	
-	num_open--;
+	/* Adjust global values */
 	num_clients--;
-	
-	if (index != num_open) 
-		open_sockets[index] = open_sockets[num_open];
+	num_open--;
+
+	if (index != num_open)
+	{
+		socketTable[index] = socketTable[num_open];
+	}
 	else
-		open_sockets[index] = 0;
-	
-	if (index != num_open) {
-		free(clients[index]);
-		clients[index] = (char *)calloc(strlen(clients[num_open]), sizeof(char));
-		strcpy(clients[index], clients[num_open]);
+	{
+		socketTable[index] = 0;
 	}
-	
-	free(clients[num_open]);
-	clients[num_open] = NULL;
+
+	if (index != num_open)
+	{
+		free(clientTable[index]);
+		clientTable[index] = (char *)calloc(strlen(clientTable[num_open]), sizeof(char));
+		strcpy(clientTable[index], clientTable[num_open]);
+	}
+	free(clientTable[num_open]);
+	clientTable[num_open] = NULL;
 }
 
-/*
- *	Responses to Cclient
- */
-void Server::handleCheck(char *to, int to_length) {
-	Message *msg;
-	int client_fd, error, msg_size;
-	
-	msg = new Message();
-	msg->set_to(to, to_length);
-	msg->set_flag(2);
-	msg->set_sequence_number(sequence_number++);
-	msg_size = msg->pack();
-	
-	client_fd = find_by_handle(to, to_length);
-		
-	error = send(client_fd, msg->sendable(), msg_size, 0);
-		
-	if (error == -1) {
-		throw SEND_EX;
+/* Validate handle upon request */
+void Server::handleCheck(char *destination, int destinationLength)
+{
+	Message *messagePacket;
+	int error;
+	/* Create message packet */
+	messagePacket = new Message();
+	messagePacket->set_to(destination, destinationLength);
+	messagePacket->set_flag(GOOD_HANDLE);
+	messagePacket->set_sequence_number(sequence_number++);
+	int payloadLen = messagePacket->packet();
+
+	/* Get file descriptor by the handle */
+	int client_fd = fdByHandle(destination, destinationLength);
+
+	/* Send call */
+	if ((error = send(client_fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
+	{
+		throw SEND_FAIL;
 	}
-	
 	print_tables();
-	
-	delete msg;
+	delete messagePacket;
 }
 
-void Server::bad_handle_response(int fd, char *handle, int length) {
-	Message *msg;
-	int error, msg_size;
-	
+/* Function for bad handles */
+void Server::badHandle(int fd, char *handle, int length)
+{
+	Message *messagePacket;
+	int error;
+
+	/* Print the handle */
 	printf("Bad handle ");
 	for (int i = 0; i < length; i++)
+	{
 		printf("%c", handle[i]);
+	}
 	printf("\n");
-	
-	msg = new Message();
-	msg->set_to(handle, length);
-	msg->set_flag(3);
-	msg->set_sequence_number(sequence_number++);
-	msg_size = msg->pack();
-		
-	error = send(fd, msg->sendable(), msg_size, 0);
-		
-	if (error == -1) {
-		throw SEND_EX;
-	}
 
-	delete msg;
-	
+	messagePacket = new Message();
+	messagePacket->set_to(handle, length);
+	messagePacket->set_flag(ERR_INITIAL_PCKT);
+	messagePacket->set_sequence_number(sequence_number++);
+	int payloadLen = messagePacket->packet();
+
+	/* Send command to close the connection of the bad handle */
+	if ((error = send(fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
+	{
+		throw SEND_FAIL;
+	}
+	delete messagePacket;
 	close_connection(fd);
 }
 
-void Server::list_length_response(int fd) {
-	Message *msg;
-	int error, msg_size;
-	
+/* These next few function signatures explain the function.
+	They are nearly identical in execution. */
+void Server::listCommandLength(int fd)
+{
+	Message *messagePacket;
+	int error;
+
 	printf("Sending list length %d", num_open);
-	msg = new Message();
-	msg->set_flag(11);
-	msg->set_int(num_open);
-	msg->set_sequence_number(sequence_number++);
-	msg_size = msg->pack();
-		
-	error = send(fd, msg->sendable(), msg_size, 0);
-		
-	if (error == -1) {
-		throw SEND_EX;
+	messagePacket = new Message();
+	messagePacket->set_flag(HANDLE_LIST_LEN);
+	messagePacket->set_int(num_open);
+	messagePacket->set_sequence_number(sequence_number++);
+	int payloadLen = messagePacket->packet();
+
+	if ((error = send(fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
+	{
+		throw SEND_FAIL;
 	}
 
-	delete msg;
+	delete messagePacket;
 }
 
-void Server::handle_request_response(int fd, Message *client_msg) {
-	Message *msg;
-	int error, msg_size, index;
+void Server::requestResponse(int fd, Message *clientMessagePacket)
+{
+	Message *messagePacket;
+	int error;
 	char handle[MAX_HANDLE_LENGTH + 2];
-	int handle_length;
-	
-	index = ntohl(((uint32_t *)client_msg->get_text())[0]);
-	
-	if (index < 0 || index > num_open) 
+
+	int index = ntohl(((uint32_t *)clientMessagePacket->get_text())[0]);
+
+	if (index < 0 || index > num_open)
 		throw LIST_EX;
-	
-	strcpy(handle+1, clients[index]);
-	handle_length = strlen(handle+1);
+
+	strcpy(handle + 1, clientTable[index]);
+	int handle_length = strlen(handle + 1);
 	handle[0] = handle_length;
-	
-	//printf("Sending handle %s", handle);
-	msg = new Message();
-	msg->set_from("Server", 6);
-	msg->set_flag(13);
-	msg->set_text(handle, handle_length + 1);
-	msg->set_sequence_number(sequence_number++);
-	msg_size = msg->pack();
-		
-	error = send(fd, msg->sendable(), msg_size, 0);
-		
-	if (error == -1) {
-		throw SEND_EX;
-	}
 
-	delete msg;
+	messagePacket = new Message();
+	messagePacket->set_from("Server", 6);
+	messagePacket->set_flag(END_OF_LIST);
+	messagePacket->set_text(handle, handle_length + 1);
+	messagePacket->set_sequence_number(sequence_number++);
+	int payloadLen = messagePacket->packet();
+
+	if ((error = send(fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
+	{
+		throw SEND_FAIL;
+	}
+	delete messagePacket;
 }
 
-void Server::bad_handle_request_response(int fd, Message *client_msg) {
-	Message *msg;
-	int error, msg_size;
-	
-	msg = new Message();
-	msg->set_flag(14);
-	msg->set_sequence_number(sequence_number++);
-	msg_size = msg->pack();
-		
-	error = send(fd, msg->sendable(), msg_size, 0);
-		
-	if (error == -1) {
-		throw SEND_EX;
+void Server::invalidHandleRequest(int fd, Message *clientMessagePacket)
+{
+	Message *messagePacket;
+	int error;
+
+	messagePacket = new Message();
+	messagePacket->set_flag(CLIENT_NAME_ERROR);
+	messagePacket->set_sequence_number(sequence_number++);
+	int payloadLen = messagePacket->packet();
+
+	if ((error = send(fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
+	{
+		throw SEND_FAIL;
 	}
 
-	delete msg;
+	delete messagePacket;
 }
 
-void Server::bad_destination_response(int fd, char *handle, int length) {
-	Message *msg;
-	int error, msg_size;
-	
+void Server::invalidDestination(int fd, char *handle, int length)
+{
+	Message *messagePacket;
+	int error;
+
 	printf("Unknown destination ");
-	msg = new Message();
-	msg->set_to(handle, length);
-	msg->set_flag(7);
-	msg->set_sequence_number(sequence_number++);
-	msg_size = msg->pack();
-		
-	error = send(fd, msg->sendable(), msg_size, 0);
-		
-	if (error == -1) {
-		throw SEND_EX;
+	messagePacket = new Message();
+	messagePacket->set_to(handle, length);
+	messagePacket->set_flag(7);
+	messagePacket->set_sequence_number(sequence_number++);
+	int payloadLen = messagePacket->packet();
+
+	error = send(fd, messagePacket->sendable(), payloadLen, 0);
+
+	if (error == GEN_ERROR)
+	{
+		throw SEND_FAIL;
 	}
 
-	delete msg;
-
+	delete messagePacket;
 }
 
-void Server::exit_response(int fd) {
-	Message *msg;
-	int msg_size, error;
-	
-	msg = new Message();
-	msg->set_flag(9);
-	msg->set_sequence_number(sequence_number++);
-	msg_size = msg->pack();
-	
-	error = send(fd, msg->sendable(), msg_size, 0);
-	
-	if (error == -1)
-		throw SEND_EX;
-		
+void Server::exitResponse(int fd)
+{
+	Message *messagePacket;
+	int error;
+
+	messagePacket = new Message();
+	messagePacket->set_flag(EXIT_REPLY);
+	messagePacket->set_sequence_number(sequence_number++);
+	int payloadLen = messagePacket->packet();
+
+	if ((error = send(fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
+		throw SEND_FAIL;
+
 	close_connection(fd);
 }
 
-/*
- *	Utility Functions
- */
-
-int Server::find_by_handle(char *handle, int length) {
+/* Find file descriptor by the handle name */
+int Server::fdByHandle(char *handle, int length)
+{
 	char *handle_str;
-	
-	handle_str = (char *) calloc(length + 1, sizeof(char));
+	handle_str = (char *)calloc(length + 1, sizeof(char));
 	memcpy(handle_str, handle, length);
-	for (int i = 0; i < num_clients; i++) {
-		if (strcmp(handle_str, clients[i]) == 0) {
+	/* Search client table for handle string */
+	for (int i = 0; i < num_clients; i++)
+	{
+		if (strcmp(handle_str, clientTable[i]) == 0)
+		{
 			free(handle_str);
-			return open_sockets[i];
+			return socketTable[i];
 		}
 	}
-	
 	free(handle_str);
 	throw HANDLE_EX;
 }
 
-int Server::handle_exists(char *handle, int length) {
+/* Verify handle exists, return a boolean-type response. */
+int Server::findHandle(char *handle, int length)
+{
 	char *handle_str;
-	
-	handle_str = (char *) calloc(length + 1, sizeof(char));
+	handle_str = (char *)calloc(length + 1, sizeof(char));
 	memcpy(handle_str, handle, length);
 	handle_str[length] = '\0';
-	
-	for (int i = 0; i < num_clients; i++) {
-		if (strcmp(handle_str, clients[i]) == 0) {
+
+	for (int i = 0; i < num_clients; i++)
+	{
+		if (strcmp(handle_str, clientTable[i]) == 0)
+		{
 			free(handle_str);
 			return 1;
 		}
 	}
-	
+
 	free(handle_str);
 	return 0;
 }
 
-void Server::resize() {
-	int *new_sockets;
-	char **new_clients;
-
-	if (num_open == capacity - 2) {
-		new_sockets = (int *)calloc(2*capacity, sizeof(int));
-		new_clients = (char **)calloc(2*capacity, sizeof(char *));
-		memcpy(new_sockets, open_sockets, capacity);
-		memcpy(new_clients, clients, capacity);
-		free(open_sockets);
-		free(clients);
-		open_sockets = new_sockets;
-		clients = new_clients;
-		capacity = 2*capacity;
-	}
-}
-
-void Server::print_tables() {
+/* Print out tables */
+void Server::print_tables()
+{
 	printf("\nCurrent handles:\n");
 	printf("----------------\n");
 	printf("fd        handle\n");
 	printf("----------------\n");
-	for (int i = 0; i < num_open; i++) 
-		printf("%d         %s\n", open_sockets[i], clients[i]);
+	for (int i = 0; i < num_open; i++)
+		printf("%d         %s\n", socketTable[i], clientTable[i]);
 	printf("\n\n");
+}
+
+/* Resize client and socket tables  */
+void Server::resize()
+{
+	int *new_sockets;
+	char **new_clients;
+	if (num_open == capacity - 2)
+	{
+		new_sockets = (int *)calloc(2 * capacity, sizeof(int));
+		new_clients = (char **)calloc(2 * capacity, sizeof(char *));
+		memcpy(new_sockets, socketTable, capacity);
+		memcpy(new_clients, clientTable, capacity);
+		free(socketTable);
+		free(clientTable);
+		socketTable = new_sockets;
+		clientTable = new_clients;
+		capacity = 2 * capacity;
+	}
+}
+
+void mainHelp(int argc, char **argv) {
+	Server *server;
+	if (argc > 2) {
+		throw ARGUMENT_ERROR;
+	}
+	server = new Server(argc, argv);
+	server->setup();
+	server->liveServer();
+}
+
+void exceptionWrap(int ex) {
+	if (ex == ARGUMENT_ERROR)
+		cout << "server <port #>";
+	else if (ex == CLIENT_NAME_ERROR)
+		cout << "Socket failed, errno " << errno << "\n";
+	else if (ex == BIND_EX)
+		cout << "Failed to bind, errno " << errno << "\n";
+	else if (ex == LISTEN_EX)
+		cout << "listen(), errno " << errno << "\n";
+	else if (ex == SELECT_EX)
+		cout << "select(), errno " << errno << "\n";
+	else if (ex == ACCEPT_EX)
+		cout << "accept(), errno " << errno << "\n";
+	else if (ex == SEND_FAIL)
+		cout << "send(), errno " << errno << "\n";
+	else
+		cout << "Unknown exception.\n";
+}
+
+void mainServerWrapper(int argc, char **argv) {
+	try {
+		mainHelp(argc, argv);
+	} catch (int ex) {
+		exceptionWrap(ex);
+	}
+}
+
+int main(int argc, char **argv) {
+	mainServerWrapper(argc, argv);
+	return 0;
 }

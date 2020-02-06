@@ -14,10 +14,10 @@
 Message::Message() {
 	sequence_number = 0;
 	flag = 0;
-	to_length = 0;
-	to = NULL;
-	from_length = 0;
-	from = NULL;
+	destinationLength = 0;
+	destination = NULL;
+	sourceLength = 0;
+	source = NULL;
 	text_length = 0;
 	text = NULL;
 	bytes = NULL;
@@ -27,10 +27,10 @@ Message::Message() {
 Message::Message(const char *text) {
 	sequence_number = 0;
 	flag = 0;
-	to_length = 0;
-	to = NULL;
-	from_length = 0;
-	from = NULL;
+	destinationLength = 0;
+	destination = NULL;
+	sourceLength = 0;
+	source = NULL;
 	text_length = strlen(text);
 	this->text = new char[text_length];
 	strcpy(this->text, text);
@@ -42,8 +42,8 @@ Message::Message(uint8_t *recieved, int length) {
 	bytes = (uint8_t *) calloc(length, sizeof(uint8_t));
 	memcpy(bytes, recieved, length);
 	total_length = length;
-	to = NULL;
-	from = NULL;
+	destination = NULL;
+	source = NULL;
 	text = NULL;
 	unpack();
 }
@@ -58,12 +58,12 @@ Message::~Message() {
  * Serialization functions
  */
 
-int Message::pack() {
+int Message::packet() {
 	uint32_t *pointer;
 	
 	total_length = MIN_MESSAGE_SIZE;
 	
-	total_length += to_length + from_length + text_length;
+	total_length += destinationLength + sourceLength + text_length;
 	
 	if (bytes != NULL)
 		free(bytes);
@@ -73,18 +73,18 @@ int Message::pack() {
 	pointer = (uint32_t *)bytes;
 	pointer[0] = htonl(sequence_number);
 	bytes[4] = flag;
-	bytes[5] = to_length;
+	bytes[5] = destinationLength;
 	
-	if (to_length)
-		memcpy(bytes + 6, to, to_length);
+	if (destinationLength)
+		memcpy(bytes + 6, destination, destinationLength);
 	
-	bytes[6 + to_length] = from_length;
+	bytes[6 + destinationLength] = sourceLength;
 	
-	if (from_length)
-		memcpy(bytes + 6 + to_length + 1, from, from_length);
+	if (sourceLength)
+		memcpy(bytes + 6 + destinationLength + 1, source, sourceLength);
 	
 	if (text_length)
-		memcpy(bytes + 6 + to_length + 1 + from_length, text, text_length);
+		memcpy(bytes + 6 + destinationLength + 1 + sourceLength, text, text_length);
 	
 	return total_length;
 }
@@ -93,28 +93,28 @@ void Message::unpack() {
 	if (bytes == NULL)
 		throw UNPACK_EX;
 	
-	if (to != NULL)
-		free(to);
-	if (from != NULL)
-		free(from);
+	if (destination != NULL)
+		free(destination);
+	if (source != NULL)
+		free(source);
 	if (text != NULL)
 		free(text);
 		
 	sequence_number = ntohl(((uint32_t *)bytes)[0]);
 	flag = bytes[4];
 	
-	to_length = bytes[5];
-	to = (char *) calloc(to_length, sizeof(char));
-	memcpy(to, bytes + 6, to_length);
+	destinationLength = bytes[5];
+	destination = (char *) calloc(destinationLength, sizeof(char));
+	memcpy(destination, bytes + 6, destinationLength);
 	
-	from_length = bytes[6 + to_length];
-	from = (char *) calloc(from_length, sizeof(char));
-	memcpy(from, bytes + 6 + to_length + 1, from_length);
+	sourceLength = bytes[6 + destinationLength];
+	source = (char *) calloc(sourceLength, sizeof(char));
+	memcpy(source, bytes + 6 + destinationLength + 1, sourceLength);
 	
-	text_length = total_length - MIN_MESSAGE_SIZE - to_length - from_length;
+	text_length = total_length - MIN_MESSAGE_SIZE - destinationLength - sourceLength;
 	//printf("total length %d\n", total_length);
 	text = (char *) calloc(text_length, sizeof(char));
-	memcpy(text, bytes + 7 + to_length + from_length, text_length);
+	memcpy(text, bytes + 7 + destinationLength + sourceLength, text_length);
 	
 }
 
@@ -133,22 +133,22 @@ void Message::set_flag(uint8_t flag) {
 	this->flag = flag;
 }
 
-void Message::set_to(const char *to, int length) {
-	if (this->to != NULL)
-		free(this->to);
+void Message::set_to(const char *destination, int length) {
+	if (this->destination != NULL)
+		free(this->destination);
 	
-	to_length = length;
-	this->to = (char *)calloc(length, sizeof(char));
-	memcpy(this->to, to, length);
+	destinationLength = length;
+	this->destination = (char *)calloc(length, sizeof(char));
+	memcpy(this->destination, destination, length);
 }
 	
-void Message::set_from(const char *from, int length) {
-	if (this->from != NULL)
-		free(this->from);
+void Message::set_from(const char *source, int length) {
+	if (this->source != NULL)
+		free(this->source);
 	
-	from_length = length;
-	this->from = (char *)calloc(length, sizeof(char));
-	memcpy(this->from, from, length );
+	sourceLength = length;
+	this->source = (char *)calloc(length, sizeof(char));
+	memcpy(this->source, source, length );
 }
 		
 void Message::set_text(const char *text, int length) {
@@ -184,19 +184,19 @@ uint8_t Message::get_flag() {
 }
 
 char *Message::get_to() {
-	return to;
+	return destination;
 }
 
 int Message::get_to_length() {
-	return to_length;
+	return destinationLength;
 }
 
-char *Message::get_from() {
-	return from;
+char *Message::getSource() {
+	return source;
 }
 
 int Message::get_from_length() {
-	return from_length;
+	return sourceLength;
 }
 
 char *Message::get_text() {
@@ -221,7 +221,7 @@ void Message::print_bytes(char *bytes, int length) {
 
 
 void Message::print() {
-	print_bytes(from, from_length);
+	print_bytes(source, sourceLength);
 	printf(": ");
 	print_bytes(text, text_length);
 }
@@ -230,10 +230,10 @@ void Message::print_full() {
 	printf("Message\n");
 	printf("   sequence_number %d\n", sequence_number);
 	printf("              flag %d\n", flag);
-	printf("         to_length %d\n", to_length);
-	printf("                to "); print_bytes(to, to_length); printf("\n");
-	printf("       from_length %d\n", from_length);
-	printf("              from "); print_bytes(from, from_length); printf("\n");
+	printf("         destinationLength %d\n", destinationLength);
+	printf("                destination "); print_bytes(destination, destinationLength); printf("\n");
+	printf("       sourceLength %d\n", sourceLength);
+	printf("              source "); print_bytes(source, sourceLength); printf("\n");
 	printf("       text_length %d\n", text_length);
 	printf("              text "); print_bytes(text, text_length); printf("\n");
 	printf("      total_length %d\n", total_length);

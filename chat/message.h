@@ -18,14 +18,15 @@
 #define END_OF_LIST 13
 
 /* Exception handling */
-#define ARG_EX 14
+#define GEN_ERROR -1
+#define ARGUMENT_ERROR 14
 #define IP_EX 15
-#define SOCK_EX 16
-#define CONNECT_EX 17
+#define CLIENT_NAME_ERROR 16
+#define SOCKET_FAIL 17
 #define BIND_EX 18
 #define PACK_EX 19
 #define UNPACK_EX 20
-#define SEND_EX 21
+#define SEND_FAIL 21
 #define SELECT_EX 22
 #define LISTEN_EX 23
 #define ACCEPT_EX 24
@@ -42,55 +43,50 @@
 #define MAX_HANDLE_LENGTH 100
 #define MAX_PAYLOAD 200
 
-class Message {
+class Message
+{
 	uint32_t sequence_number;
 	uint8_t flag;
-	
-	uint8_t to_length;
-	char *to;
-	uint8_t from_length;
-	char *from;
+	uint8_t destinationLength;
+	char *destination;
+	uint8_t sourceLength;
+	char *source;
 	int text_length;
 	char *text;
 	uint8_t *bytes;
 	int total_length;
-	
+
 public:
-	
-	// Structors
+	/* Create message class */
 	Message();
 	Message(const char *text);
 	Message(uint8_t *recieved, int length);
 	~Message();
-	
-	// Serialization
-	int pack();
+	/* Assemble to message packet */
+	int packet();
 	void unpack();
 	uint8_t *sendable();
-
-	// Output
-	void print_full();
-	void print();
-	void print_bytes(char *bytes, int length);
-	
-	// Set
+	/* Set message fields */
 	void set_sequence_number(uint32_t number);
 	void set_flag(uint8_t flag);
-	void set_to(const char *to, int length);
-	void set_from(const char *from, int length);
+	void set_to(const char *destination, int length);
+	void set_from(const char *source, int length);
 	void set_text(const char *text, int length);
 	void set_int(int to_set);
-	
-	// Get
+	/* Get message fields */
 	uint32_t get_sequence_number();
 	uint8_t get_flag();
 	char *get_to();
 	int get_to_length();
-	char *get_from();
+	char *getSource();
 	int get_from_length();
 	char *get_text();
 	int get_length();
 	int get_text_length();
+	/* Print message fields */
+	void print_full();
+	void print();
+	void print_bytes(char *bytes, int length);
 };
 
 #endif

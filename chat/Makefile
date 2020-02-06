@@ -8,11 +8,11 @@ FLAGS = -Wall -Werror
 
 all:  cclient server
 
-cclient: cclient.cpp message.h message.cpp cclientMain.cpp cclient.h
-	$(COMPILER) $(FLAGS) cclient.cpp cclientMain.cpp message.cpp -o cclient
+cclient: cclient.cpp message.h message.cpp cclient.h
+	$(COMPILER) $(FLAGS) cclient.cpp message.cpp -o cclient
 
-server: serverMain.cpp server.cpp server.h serverMain.cpp message.h message.cpp
-	$(COMPILER) $(FLAGS) server.cpp serverMain.cpp message.cpp -o server
+server: server.cpp server.h message.h message.cpp
+	$(COMPILER) $(FLAGS) server.cpp message.cpp -o server
 	
 clean:
 	rm cclient server
