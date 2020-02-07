@@ -1,8 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include <iostream>
 #include <sstream>
-#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -11,511 +8,454 @@
 #include <netdb.h>
 #include <string.h>
 #include <cerrno>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <arpa/inet.h>
 
 #include "message.h"
 #include "cclient.h"
 
 using namespace std;
 
-/* Create client instance */
+/* Client creation */
 Cclient::Cclient(char *handle, struct hostent *server, int port)
 {
-    this->handle = handle;
-    this->server = server;
-    this->port = port;
+	this->handle = handle;
+	this->server = server;
+	this->port = port;
 }
 
-/* Initialize client fields */
-void Cclient::init()
+/* Initialize client fields and create connection */
+void Cclient::createClient()
 {
-    /* Create client fields */
-    Message *messagePacket;
-    int payloadLen;
-    int sendb;
-    exitb = false;
-    sequence_number = 0;
+	Message *messagePacket;
+	int msg_size, error;
 
-    /* Set up server information */
-    server_address.sin_family = AF_INET;
-    server_address.sin_port = htons((short)port);
+	exit = false;
+	seqNum = 0;
+	/* Create connection with server */
+	server_address.sin_family = AF_INET;
+	server_address.sin_port = htons((short)port);
 
-    /* Cooy address information */
-    memcpy(&(server_address.sin_addr.s_addr), server->h_addr, server->h_length);
+	memcpy(&(server_address.sin_addr.s_addr), server->h_addr, server->h_length);
+	/* Retrieve socket file descriptor, check for availability */
+	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (socket_fd == GEN_ERROR)
+		throw SOCKET_ERROR;
+	/* connect() call to server */
+	if (connect(socket_fd, (struct sockaddr *)(&server_address), 16) == GEN_ERROR)
+		throw CONNET_CALL_FAIL;
+	/* Populate message fields */
+	messagePacket = new Message();
+	messagePacket->setFlag(INITIAL_PCKT);
+	messagePacket->sourceHandle(handle, strlen(handle));
+	messagePacket->sequenceNumber(seqNum++);
+	msg_size = messagePacket->messagePacket();
+	/* Send initial packet to server */
+	error = send(socket_fd, messagePacket->sendPacket(), msg_size, 0);
+	if (error == GEN_ERROR)
+		throw SEND_CALL_FAIL;
 
-    /* Obtain socket file descriptor */
-    if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) == GEN_ERROR)
-        throw CLIENT_NAME_ERROR;
-
-    /* Create connection */
-    if (connect(socket_fd, (struct sockaddr *)(&server_address), 16) == GEN_ERROR)
-        throw SOCKET_FAIL;
-
-    /* Populate message fields */
-    messagePacket = new Message();
-    messagePacket->set_flag(INITIAL_PCKT);
-    messagePacket->set_from(handle, strlen(handle));
-    messagePacket->set_sequence_number(sequence_number++);
-    /* Package the message into a packet */
-    payloadLen = messagePacket->packet();
-
-    /* Send call */
-    if ((sendb = send(socket_fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
-        throw SEND_FAIL;
-
-    /* Delete temporary message data structure */
-    delete messagePacket;
-    /* Check handle for availability */
-    handleCheck();
+	delete messagePacket;
+	validHandle();
 }
 
-/* Create connection to message chat */
-void Cclient::createMessage()
+/* Main client loop */
+void Cclient::clientMain()
 {
-    /* Create values for catching user input to message structure */
-    struct timeval wait_time;
-    fd_set read_set;
-    printf("$: ");
-    fflush(stdout);
-
-    /* This is the loop to obtain information */
-    while (!exitb)
-    {
-        FD_ZERO(&read_set);
-        /* Setting last parameter for select call */
-        wait_time.tv_sec = 1;
-        wait_time.tv_usec = 0;
-
-        /* Setting socket file descriptor */
-        FD_SET(socket_fd, &read_set);
-        FD_SET(0, &read_set);
-
-        /* Select call */
-        if (select(socket_fd + 1, &read_set, NULL, NULL, &wait_time) == GEN_ERROR) {
-            throw SELECT_EX;
-        } 
-        if (FD_ISSET(socket_fd, &read_set)) {
-            messageCheck();
-        }
-    }
+	printf("$: ");
+	fflush(stdout);
+	struct timeval select_timer;
+	fd_set read_set;
+	/* Loop while active client */
+	while (!exit)
+	{
+		FD_ZERO(&read_set);
+		select_timer.tv_sec = 1;
+		select_timer.tv_usec = 0;
+		/* Set socket file descriptors */
+		FD_SET(socket_fd, &read_set);
+		FD_SET(0, &read_set);
+		/* select() call */
+		if (select(socket_fd + 1, &read_set, NULL, NULL, &select_timer) == GEN_ERROR) {
+			throw SELECT_CALL_FAIL;
+		}
+		/* Check if there is a message from server */
+		if (FD_ISSET(socket_fd, &read_set))
+			unpackMessage();
+		/* Get input from user */
+		if (FD_ISSET(0, &read_set))
+			getInput();
+	}
 }
 
-/* Exit call */
-void Cclient::exit()
+/* Called upon exit call */
+void Cclient::clientExit()
 {
-    Message *messagePacket;
-    uint8_t *buffer;
-    int payloadLen;
-    int error;
-    int flag;
+	Message *messagePacket;
+	uint8_t *buffer;
+	int msg_size, error, flag;
 
-    /* Exit request */
-    messagePacket = new Message();
-    messagePacket->set_flag(EXIT_REQUEST);
-    messagePacket->set_from(handle, strlen(handle));
-    payloadLen = messagePacket->packet();
+	/* Create exit message to send to server */
+	messagePacket = new Message();
+	messagePacket->setFlag(EXIT_REQUEST);
+	messagePacket->sourceHandle(handle, strlen(handle));
+	msg_size = messagePacket->messagePacket();
+	messagePacket->sequenceNumber(seqNum++);
+	error = send(socket_fd, messagePacket->sendPacket(), msg_size, 0);
 
-    /* Get ready to send() */
-    messagePacket->set_sequence_number(sequence_number++);
+	if (error == GEN_ERROR)
+		throw SEND_CALL_FAIL;
 
-    if ((error = send(socket_fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
-        throw SEND_FAIL;
+	delete messagePacket;
 
-    delete messagePacket;
+	/* Buffer received data until ack */
+	buffer = (uint8_t *)calloc(MAXBUF, sizeof(uint8_t));
 
-    /* Wait for ACK from server */
-    buffer = (uint8_t *)calloc(MAXBUF, sizeof(uint8_t));
+	msg_size = recv(socket_fd, buffer, MAXBUF, 0);
 
-    /* Obtain message size. If 0, connection closed */
-    if ((payloadLen = recv(socket_fd, buffer, MAXBUF, 0)) == 0)
-        throw SOCKET_FAIL;
-
-    /* Create new message to get the exit flag */
-    messagePacket = new Message(buffer, payloadLen);
-    flag = messagePacket->get_flag();
-    free(buffer);
-    delete messagePacket;
-
-    // Check flag for ACK
-    if (flag == EXIT_REPLY)
-    {
-        printf("Connection to server closed.\n");
-    }
-    else {
-        throw EXIT_EX;
-    }
-
-    close(socket_fd);
+	/* If no ACK is received */
+	if (msg_size == 0)
+		throw CONNET_CALL_FAIL;
+	/* Successful exit */
+	messagePacket = new Message(buffer, msg_size);
+	flag = messagePacket->getFlag();
+	free(buffer);
+	delete messagePacket;
+	/* See if exit had been noticed */
+	if (flag == EXIT_REQUEST)
+	{
+		printf("Connection to server closed.\n");
+	}
+	else {
+		throw GEN_ERROR;
+	}
+	close(socket_fd);
 }
 
-/* Check client handle for validity */
-void Cclient::handleCheck()
+/* Check for valid handle */
+void Cclient::validHandle()
 {
-    /* Populate fields */
-    uint8_t *buffer;
-    int message_size, flag;
-    Message *messagePacket;
+	uint8_t *buffer;
+	int message_size, flag;
+	Message *messagePacket;
+	
+	buffer = (uint8_t *)calloc(MAXBUF, sizeof(uint8_t));
+	message_size = recv(socket_fd, buffer, MAXBUF, 0);
 
-    buffer = (uint8_t *)calloc(MAXBUF, sizeof(uint8_t));
+	if (message_size == 0){
+		throw CONNET_CALL_FAIL;
+	}
+	messagePacket = new Message(buffer, message_size);
+	flag = messagePacket->getFlag();
+	free(buffer);
+	delete messagePacket;
 
-    /* recv call */
-    if ((message_size = recv(socket_fd, buffer, MAXBUF, 0)) == 0)
-        throw SOCKET_FAIL;
-
-    messagePacket = new Message(buffer, message_size);
-    flag = messagePacket->get_flag();
-    free(buffer);
-    delete messagePacket;
-
-    /* Check flags for response from server */
-    if (flag == GOOD_HANDLE){
-        return;
-    }
-    else if (flag == ERR_INITIAL_PCKT) {
-        throw HANDLE_EX;
-    }
-    else {
-        throw GEN_ERROR;
-    }
+	if (flag == GOOD_HANDLE){
+		return;
+	} else if (flag == ERR_INITIAL_PCKT) {
+		throw INVALID_HANDLE;
+	} else {
+		throw GEN_ERROR;
+	}
 }
 
-/* Parse client input on command line */
-void Cclient::inputCheck()
+void Cclient::getInput()
 {
-    char input_buffer[MAXBUF];
-    char sel;
-    int self_message = 0;
+	char input_buffer[MAXBUF];
+	char cmd;
+	int selfMessage;
+	selfMessage = 0;
 
-    /* Get input from command line */
-    fgets(input_buffer, MAXBUF, stdin);
-    try
-    {
-        if (strlen(input_buffer) > 1)
-        {
-            /* Allow for missing % */
-            if (input_buffer[0] == '%') {
-                sel = input_buffer[1];
-            } else {
-                sel = input_buffer[0];
-            }
-            if (sel == 'm' || sel == 'M')
-            {
-                self_message = sendMessage(input_buffer);
-            }
-            else if (sel == 'b' || sel == 'B')
-            {
-                broadcastMessage(input_buffer);
-            }
-            else if (sel == 'l' || sel == 'L')
-            {
-                listCommand();
-            }
-            else if (sel == 'e' || sel == 'E')
-            {
-                exitb = true;
-            }
-            else
-            {
-                /* Print if command not valid */
-                printf("Invalid command format\n");
-            }
-        }
-        else {
-            printf("%%<option> <handle> <server name> <message>\n");
-        }
-    }
-    catch (int ex)
-    {
-        if (ex == MAX_PAYLOAD)
-            printf("Messages must be under 200 characters.\n");
-        else
-            throw ex;
-    }
+	fgets(input_buffer, MAXBUF, stdin);
+	try
+	{
+		if (strlen(input_buffer) > 1)
+		{
+			input_buffer[0] == '%' ? cmd = input_buffer[1] : cmd = input_buffer[0];
 
-    if (!self_message)
-    {
-        printf("$: ");
-        fflush(stdout);
-    }
+			if (cmd == 'm' || cmd == 'M')
+			{
+				selfMessage = sendClientMessage(input_buffer);
+			}
+			else if (cmd == 'b' || cmd == 'B')
+			{
+				broadcast(input_buffer);
+			}
+			else if (cmd == 'l' || cmd == 'L')
+			{
+				listCommand();
+			}
+			else if (cmd == 'e' || cmd == 'E')
+			{
+				exit = true;
+			}
+		}
+		else
+			printf("%%<option> <handle> <message>\n");
+	}
+	catch (int ex)
+	{
+		if (ex == INVALID_MESSAGE_ENTRY){
+			printf("Messages must be under 100 characters.\n");
+		}
+		else {
+			throw ex;
+		}
+	}
+
+	if (!selfMessage)
+	{
+		printf("$: ");
+		fflush(stdout);
+	}
 }
 
-/* Check the payload being sent */
-void Cclient::messageCheck()
+void Cclient::unpackMessage()
 {
-    uint8_t *buffer;
-    int message_size, flag;
-    char handle[MAX_HANDLE_LENGTH];
-    Message *messagePacket;
+	uint8_t *buffer;
+	int message_size, flag;
+	char handle[MAX_HANDLE_LEN];
+	Message *messagePacket;
 
-    buffer = (uint8_t *)calloc(MAXBUF, sizeof(uint8_t));
-
-    /* Check for a closed connection */
-    if ((message_size = recv(socket_fd, buffer, MAXBUF, 0)) == 0)
-        throw SOCKET_FAIL;
-
-    messagePacket = new Message(buffer, message_size);
-    flag = messagePacket->get_flag();
-    printf("\n");
-
-    if (flag == ERR_MESSAGE_PCKT)
-    {
-        memcpy(handle, messagePacket->get_to(), messagePacket->get_to_length());
-        handle[messagePacket->get_to_length()] = '\0';
-        printf("Client with handle %s does not exist.\n", handle);
-    }
-
-    delete messagePacket;
-    free(buffer);
-    printf("$: ");
-    fflush(stdout);
+	buffer = (uint8_t *)calloc(MAXBUF, sizeof(uint8_t));
+	message_size = recv(socket_fd, buffer, MAXBUF, 0);
+	/* Connection failure */
+	if (message_size == 0) {
+		throw CONNET_CALL_FAIL;
+	}
+	messagePacket = new Message(buffer, message_size);
+	flag = messagePacket->getFlag();
+	printf("\n");
+	if (flag == MESSAGE_PCKT)
+		messagePacket->print();
+	else if (flag == 7)
+	{
+		memcpy(handle, messagePacket->getDestination(), messagePacket->getDestinationLen());
+		handle[messagePacket->getDestinationLen()] = '\0';
+		printf("Client with handle %s does not exist.\n", handle);
+	}
+	delete messagePacket;
+	free(buffer);
+	printf("$: ");
+	fflush(stdout);
 }
 
-/* Prepare client's message for sending */
-int Cclient::sendMessage(char *input)
+int Cclient::sendClientMessage(char *input)
 {
-    Message *messagePacket;
-    int error, self_message;
-    char temp[MAX_HANDLE_LENGTH];
-    char *message_start;
-    int message_size;
-    char destination[MAX_HANDLE_LENGTH];
-    int destinationLength;
+	char dest[101];
+	int destinationHandleLen;
+	char temp[100];
+	char *message_start;
+	int message_size;
+	Message *messagePacket;
+	int error, selfMessage;
 
-    /* Get input info about message start and end points */
-    sscanf(input, "%s %100s", temp, destination);
-    destinationLength = strlen(destination);
+	sscanf(input, "%s %100s", temp, dest);
+	destinationHandleLen = strlen(dest);
+	message_start = strstr(input, dest) + strlen(dest) + 1;
+	selfMessage = (strcmp(dest, handle) == 0);
 
-    message_start = strstr(input, destination) + strlen(destination) + 1;
+	if (strlen(message_start) > MAX_MESSAGE_SIZE) {
+		throw INVALID_MESSAGE_ENTRY;
+	}
 
-    self_message = (strcmp(destination, handle) == 0);
+	for (message_size = 0; message_start[message_size] != '\0'; message_size++);
 
-    if (strlen(message_start) > MAX_PAYLOAD)
-        throw MESSAGE_SIZE_EX;
+	message_size++;
 
-    /* Find end of message to size message */
-    for (message_size = 0; message_start[message_size] != '\0'; message_size++);
-    message_size++;
+	messagePacket = new Message();
+	messagePacket->destinationHandle(dest, destinationHandleLen);
+	messagePacket->sourceHandle(handle, strlen(handle));
 
-    /* Populate message fields */
-    messagePacket = new Message();
-    messagePacket->set_to(destination, destinationLength);
-    messagePacket->set_from(handle, strlen(handle));
+	if (message_size == 0) {
+		messagePacket->setPayload("\n", 1);
+	} else {
+		messagePacket->setPayload(message_start, message_size);
+	}
+	messagePacket->setFlag(MESSAGE_PCKT);
+	messagePacket->sequenceNumber(seqNum++);
+	message_size = messagePacket->messagePacket();
+	error = send(socket_fd, messagePacket->sendPacket(), message_size, 0);
 
-    if (message_size == 0) {
-        /* Send empty message */
-        messagePacket->set_text("\n", 1);
-    } else {
-        messagePacket->set_text(message_start, message_size);
-    }
+	if (error == GEN_ERROR)
+		throw SEND_CALL_FAIL;
 
-    messagePacket->set_flag(MESSAGE_PCKT);
-    messagePacket->set_sequence_number(sequence_number++);
-    message_size = messagePacket->packet();
-
-    /* Error check */
-    if ((error = send(socket_fd, messagePacket->sendable(), message_size, 0)) == GEN_ERROR)
-        throw SEND_FAIL;
-
-    return self_message;
+	return selfMessage;
 }
 
-void Cclient::broadcastMessage(char *input)
+void Cclient::broadcast(char *input)
 {
-    int message_size;
-    Message *messagePacket;
-    int error;
-    char temp[MAX_HANDLE_LENGTH];
-    char *message_start;
+	char temp[100];
+	char *message_start;
+	int message_size;
+	Message *messagePacket;
+	int error;
 
-    /* Retrieve input */
-    sscanf(input, "%s", temp);
-    message_start = input + strlen(temp) + 1;
+	sscanf(input, "%s", temp);
+	message_start = input + strlen(temp) + 1;
+	if (strlen(message_start) > MAX_MESSAGE_SIZE)
+		throw INVALID_MESSAGE_ENTRY;
+	for (message_size = 0; message_start[message_size] != '\0'; message_size++);
 
-    if (strlen(message_start) > MAX_PAYLOAD)
-        throw MESSAGE_SIZE_EX;
+	message_size++;
+	messagePacket = new Message();
+	messagePacket->sourceHandle(handle, strlen(handle));
+	messagePacket->setPayload(message_start, message_size);
+	if (message_size == 0)
+		messagePacket->setPayload("\n", 1);
+	else
+		messagePacket->setPayload(message_start, message_size);
 
-    /* Find end of message to size message */
-    for (message_size = 0; message_start[message_size] != '\0'; message_size++);
-    message_size++;
+	messagePacket->setFlag(MESSAGE_PCKT);
+	messagePacket->sequenceNumber(seqNum++);
+	message_size = messagePacket->messagePacket();
 
-    /* Populate message fields */
-    messagePacket = new Message();
-    messagePacket->set_from(handle, strlen(handle));
-    messagePacket->set_text(message_start, message_size);
+	error = send(socket_fd, messagePacket->sendPacket(), message_size, 0);
 
-    if (message_size == 0) {
-        messagePacket->set_text("\n", 1);
-    } else {
-        messagePacket->set_text(message_start, message_size);
-    }
-
-    messagePacket->set_flag(MESSAGE_PCKT);
-    messagePacket->set_sequence_number(sequence_number++);
-    message_size = messagePacket->packet();
-
-    if ((error = send(socket_fd, messagePacket->sendable(), message_size, 0)) == GEN_ERROR)
-        throw SEND_FAIL;
+	if (error == GEN_ERROR)
+		throw SEND_CALL_FAIL;
 }
 
-/* Initiate list command */
 void Cclient::listCommand()
 {
-    int list_length = listLengthRequest();
-    int i;
-    for (i = 0; i < list_length; i++) {
-        handleRequest(i);
-    }
+	int list_length;
+	list_length = listLengthRequest();
+	for (int i = 0; i < list_length; i++)
+		requestHandle(i);
 }
 
-/* Request to get the list length */
 int Cclient::listLengthRequest()
 {
-    Message *messagePacket;
-    uint8_t buffer[MAXBUF];
-    int payloadLen;
-    int error;
-    int flag;
-    int length;
+	Message *messagePacket;
+	uint8_t buffer[MAXBUF];
+	int msg_size, error, flag, length;
 
-    /* Request length from server */
-    messagePacket = new Message();
-    messagePacket->set_flag(HANDLE_LIST_REQUEST);
-    messagePacket->set_from(handle, strlen(handle));
-    messagePacket->set_sequence_number(sequence_number++);
-    payloadLen = messagePacket->packet();
+	//Request list length from server, flag HANDLE_LIST_REQUEST
+	messagePacket = new Message();
+	messagePacket->setFlag(HANDLE_LIST_REQUEST);
+	messagePacket->sourceHandle(handle, strlen(handle));
+	messagePacket->sequenceNumber(seqNum++);
+	msg_size = messagePacket->messagePacket();
 
-    if ((error = send(socket_fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR)
-        throw SEND_FAIL;
+	error = send(socket_fd, messagePacket->sendPacket(), msg_size, 0);
 
-    delete messagePacket;
+	if (error == GEN_ERROR)
+		throw SEND_CALL_FAIL;
 
-    /* Recv call for list length */
-    if ((payloadLen = recv(socket_fd, buffer, MAXBUF, 0)) == 0) {
-        throw SOCKET_FAIL;
-    }
+	delete messagePacket;
 
-    messagePacket = new Message(buffer, payloadLen);
-    flag = messagePacket->get_flag();
-    length = ntohl(((uint32_t *)messagePacket->get_text())[0]);
-    delete messagePacket;
+	msg_size = recv(socket_fd, buffer, MAXBUF, 0);
 
-    if (flag != HANDLE_LIST_LEN) {
-        throw LIST_EX;
-    }
+	if (msg_size == 0)
+		throw CONNET_CALL_FAIL;
 
-    return length;
+	messagePacket = new Message(buffer, msg_size);
+	flag = messagePacket->getFlag();
+	length = ntohl(((uint32_t *)messagePacket->getPayload())[0]);
+	delete messagePacket;
+
+	// Check Flag for HANDLE_LIST_LEN
+	if (flag != HANDLE_LIST_LEN)
+		throw LIST_COMMAND_FAIL;
+
+	return length;
 }
 
-/* List of handles request */
-void Cclient::handleRequest(int index)
+void Cclient::requestHandle(int index)
 {
-    Message *messagePacket;
-    uint8_t buffer[MAXBUF];
-    char *incoming_handle;
-    uint8_t handle_length;
-    int error;
-    int flag;
-    int payloadLen; 
+	Message *messagePacket;
+	uint8_t buffer[MAXBUF];
+	char *incoming_handle;
+	uint8_t handle_length;
+	int msg_size, error, flag;
 
-    /* Send request for handle */
-    messagePacket = new Message();
-    messagePacket->set_flag(HANDLE_LIST_REQUEST);
-    messagePacket->set_from(handle, strlen(handle));
-    messagePacket->set_int(index);
-    messagePacket->set_sequence_number(sequence_number++);
-    payloadLen = messagePacket->packet();
+/* 	Request handle with index */	
+	messagePacket = new Message();
+	messagePacket->setFlag(HANDLE_INFO);
+	messagePacket->sourceHandle(handle, strlen(handle));
+	messagePacket->setIndex(index);
+	messagePacket->sequenceNumber(seqNum++);
+	msg_size = messagePacket->messagePacket();
 
-    /* Send call */
-    if ((error = send(socket_fd, messagePacket->sendable(), payloadLen, 0)) == GEN_ERROR) {
-        throw SEND_FAIL;
-    }
+	error = send(socket_fd, messagePacket->sendPacket(), msg_size, 0);
+	if (error == GEN_ERROR)
+		throw SEND_CALL_FAIL;
+	delete messagePacket;
+	msg_size = recv(socket_fd, buffer, MAXBUF, 0);
+	if (msg_size == 0)
+		throw CONNET_CALL_FAIL;
 
-    delete messagePacket;
-
-    /* Recv call for list length */
-    if ((payloadLen = recv(socket_fd, buffer, MAXBUF, 0)) == 0)
-        throw SOCKET_FAIL;
-
-    messagePacket = new Message(buffer, payloadLen);
-    flag = messagePacket->get_flag();
-    incoming_handle = messagePacket->get_text();
-
-    delete messagePacket;
-
-    /* Handle incoming list */
-    if (flag == HANDLE_LIST_LEN)
-    {
-        handle_length = incoming_handle[0];
-        for (int i = 1; i <= handle_length; i++) {
-            printf("%c", incoming_handle[i]);
-        }
-        printf("\n");
-    } else {
-        throw LIST_EX;
-    }
+	messagePacket = new Message(buffer, msg_size);
+	flag = messagePacket->getFlag();
+	incoming_handle = messagePacket->getPayload();
+	delete messagePacket;
+	if (flag == END_OF_LIST)
+	{
+		handle_length = incoming_handle[0];
+		for (int i = 1; i <= handle_length; i++)
+			printf("%c", incoming_handle[i]);
+		printf("\n");
+	}
+	else {
+		throw LIST_COMMAND_FAIL;
+	}
 }
 
-/* Basic exception catching */
-void exceptionWrap(int ex, char **argv, char *handle)
+void clientException(int ex) {
+	if (ex == INVALID_ARGUMENT){
+		cout << "cclient <handle> <server-IP> <server-port>\n";
+	} else if (ex == INVALID_IP) {
+		cout << "Could not resolve hostname.\n";
+	} else if (ex == SOCKET_ERROR){
+		cout << "socket() failed. errno " << errno << "\n";
+	} else if (ex == CONNET_CALL_FAIL){
+		cout << "connect() failed. errno " << errno << "\n";
+	} else if (ex == PACKET_ASSEMBLY_FAILURE){
+		cout << "Message packing failed. errno " << errno << "\n";
+	} else if (ex == INVALID_PACKET){
+		cout << "Message unpacking failed. errno " << errno << "\n";
+	} else if (ex == SEND_CALL_FAIL) {
+		cout << "Message sending failed. errno " << errno << "\n";
+	} else if (ex == INVALID_HANDLE){
+		cout << "Handle is already taken.\n";
+	} else if (ex == INVALID_HANDLE_LEN){
+		cout << "Handles must be under 100 characters.\n";
+	} else {
+		cout << "Unknown exception " << ex << "\n";
+	}
+}
+
+void clientWrap(char* handle, struct hostent *server, int port, Cclient *client) {
+	if (strlen(handle) > MAX_HANDLE_LEN)
+		throw INVALID_HANDLE_LEN;
+
+	if (server == NULL)
+		throw INVALID_IP;
+
+	client = new Cclient(handle, server, port);
+	client->createClient();
+	client->clientMain();
+	client->clientExit();
+}
+
+int main(int argc, char **argv)
 {
-    switch (ex)
-    {
-    case ARGUMENT_ERROR:
-        cout << "cclient <handle> <server-IP> <server-port>\n";
-        break;
-    case CLIENT_NAME_ERROR:
-        cout << "Could not resolve hostname " << argv[2] << "\n";
-        break;
-    case SOCKET_FAIL:
-        cout << "socket() failed. errno " << errno << "\n";
-        break;
-    case SEND_FAIL:
-        cout << "Message sending failed. errno " << errno << "\n";
-    case HANDLE_EX:
-        cout << "Handle " << handle << " is already taken.\n";
-        break;
-    case HANDLE_LENGTH_EX:
-        cout << "Handles must be under 100 characters.\n";
-        break;
-    default:
-        cout << "Unknown exception " << ex << "\n";
-    }
-}
-
-void mainWrap(int argc, char **argv) {
-    char *handle;
+	if (argc != 4) {throw INVALID_ARGUMENT;}
+	char *handle;
 	struct hostent *server;
 	int port;
-    Cclient *client;
-
-    try {
-        if (argc != 4)
-        {
-            throw ARGUMENT_ERROR;
-        }
-        handle = argv[1];
-        server = gethostbyname(argv[2]);
-        stringstream(argv[3]) >> port;
-
-        if (server == NULL)
-        {
-            throw IP_EX;
-        }
-
-        if (strlen(handle) > MAX_PAYLOAD)
-        {
-            throw HANDLE_LENGTH_EX;
-        }
-
-        client = new Cclient(handle, server, port);
-        client->init();
-        client->createMessage();
-        client->exit();
-    } catch (int ex) {
-        exceptionWrap(ex, argv, handle);
-    }
-}
-
-int main(int argc, char **argv) {
-    mainWrap(argc, argv);
-    return 0;
+	Cclient *client = NULL;
+	try
+	{	handle = argv[1];
+		server = gethostbyname(argv[2]);
+		stringstream(argv[3]) >> port;
+		clientWrap(handle, server, port, client);
+	}
+	catch (int ex)
+	{
+		clientException(ex);
+	}
 }

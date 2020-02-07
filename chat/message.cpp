@@ -1,50 +1,60 @@
-#include <stdlib.h>
+#include <iostream>
+#include <sstream>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <netdb.h>
 #include <string.h>
-#include <stdint.h>
+#include <cerrno>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdint.h>
 #include <arpa/inet.h>
 
 #include "message.h"
 
-#define MIN_MESSAGE_SIZE 7
+#define MIN_MESSAGE_SIZE 0
 
 /*
  * Structors
  */
 Message::Message() {
-	sequence_number = 0;
+	seqNum = 0;
 	flag = 0;
-	destinationLength = 0;
-	destination = NULL;
-	sourceLength = 0;
+	destinationHandleLen = 0;
+	dest = NULL;
+	sourceHandleLen = 0;
 	source = NULL;
-	text_length = 0;
-	text = NULL;
+	payloadLen = 0;
+	payload = NULL;
 	bytes = NULL;
 	total_length = 0;
 }
 
-Message::Message(const char *text) {
-	sequence_number = 0;
+Message::Message(const char *payload) {
+	seqNum = 0;
 	flag = 0;
-	destinationLength = 0;
-	destination = NULL;
-	sourceLength = 0;
+	destinationHandleLen = 0;
+	dest = NULL;
+	sourceHandleLen = 0;
 	source = NULL;
-	text_length = strlen(text);
-	this->text = new char[text_length];
-	strcpy(this->text, text);
+	payloadLen = strlen(payload);
+	this->payload = new char[payloadLen];
+	strcpy(this->payload, payload);
 	bytes = NULL;
 	total_length = 0;
 }
 
-Message::Message(uint8_t *recieved, int length) {
+Message::Message(uint8_t *received, int length) {
 	bytes = (uint8_t *) calloc(length, sizeof(uint8_t));
-	memcpy(bytes, recieved, length);
+	memcpy(bytes, received, length);
 	total_length = length;
-	destination = NULL;
+	dest = NULL;
 	source = NULL;
-	text = NULL;
+	payload = NULL;
 	unpack();
 }
 
@@ -58,12 +68,12 @@ Message::~Message() {
  * Serialization functions
  */
 
-int Message::packet() {
+int Message::messagePacket() {
 	uint32_t *pointer;
 	
 	total_length = MIN_MESSAGE_SIZE;
 	
-	total_length += destinationLength + sourceLength + text_length;
+	total_length += destinationHandleLen + sourceHandleLen + payloadLen;
 	
 	if (bytes != NULL)
 		free(bytes);
@@ -71,144 +81,142 @@ int Message::packet() {
 	bytes = (uint8_t *)calloc(total_length, sizeof(uint8_t));
 	
 	pointer = (uint32_t *)bytes;
-	pointer[0] = htonl(sequence_number);
+	pointer[0] = htonl(seqNum);
 	bytes[4] = flag;
-	bytes[5] = destinationLength;
+	bytes[5] = destinationHandleLen;
 	
-	if (destinationLength)
-		memcpy(bytes + 6, destination, destinationLength);
+	if (destinationHandleLen)
+		memcpy(bytes + 6, dest, destinationHandleLen);
 	
-	bytes[6 + destinationLength] = sourceLength;
+	bytes[6 + destinationHandleLen] = sourceHandleLen;
 	
-	if (sourceLength)
-		memcpy(bytes + 6 + destinationLength + 1, source, sourceLength);
+	if (sourceHandleLen)
+		memcpy(bytes + 6 + destinationHandleLen + 1, source, sourceHandleLen);
 	
-	if (text_length)
-		memcpy(bytes + 6 + destinationLength + 1 + sourceLength, text, text_length);
+	if (payloadLen)
+		memcpy(bytes + 6 + destinationHandleLen + 1 + sourceHandleLen, payload, payloadLen);
 	
 	return total_length;
 }
 
 void Message::unpack() {
 	if (bytes == NULL)
-		throw UNPACK_EX;
-	
-	if (destination != NULL)
-		free(destination);
+		throw INVALID_PACKET;
+	if (payload != NULL)
+		free(payload);
 	if (source != NULL)
-		free(source);
-	if (text != NULL)
-		free(text);
-		
-	sequence_number = ntohl(((uint32_t *)bytes)[0]);
+		free(source);	
+	if (dest != NULL)
+		free(dest);
+
+	seqNum = ntohl(((uint32_t *)bytes)[0]);
 	flag = bytes[4];
 	
-	destinationLength = bytes[5];
-	destination = (char *) calloc(destinationLength, sizeof(char));
-	memcpy(destination, bytes + 6, destinationLength);
+	destinationHandleLen = bytes[5];
+	dest = (char *) calloc(destinationHandleLen, sizeof(char));
+	memcpy(dest, bytes + 6, destinationHandleLen);
 	
-	sourceLength = bytes[6 + destinationLength];
-	source = (char *) calloc(sourceLength, sizeof(char));
-	memcpy(source, bytes + 6 + destinationLength + 1, sourceLength);
+	sourceHandleLen = bytes[6 + destinationHandleLen];
+	source = (char *) calloc(sourceHandleLen, sizeof(char));
+	memcpy(source, bytes + 6 + destinationHandleLen + 1, sourceHandleLen);
 	
-	text_length = total_length - MIN_MESSAGE_SIZE - destinationLength - sourceLength;
-	//printf("total length %d\n", total_length);
-	text = (char *) calloc(text_length, sizeof(char));
-	memcpy(text, bytes + 7 + destinationLength + sourceLength, text_length);
+	payloadLen = total_length - MIN_MESSAGE_SIZE - destinationHandleLen - sourceHandleLen;
+	payload = (char *) calloc(payloadLen, sizeof(char));
+	memcpy(payload, bytes + 7 + destinationHandleLen + sourceHandleLen, payloadLen);
 	
 }
 
-uint8_t *Message::sendable() {
+uint8_t *Message::sendPacket() {
 	return bytes;
 }
 
 /*
  * Setter functions
  */
-void Message::set_sequence_number(uint32_t number) {
-	sequence_number = number;
+void Message::sequenceNumber(uint32_t number) {
+	seqNum = number;
 }
 
-void Message::set_flag(uint8_t flag) {
+void Message::setFlag(uint8_t flag) {
 	this->flag = flag;
 }
 
-void Message::set_to(const char *destination, int length) {
-	if (this->destination != NULL)
-		free(this->destination);
+void Message::destinationHandle(const char *dest, int length) {
+	if (this->dest != NULL)
+		free(this->dest);
 	
-	destinationLength = length;
-	this->destination = (char *)calloc(length, sizeof(char));
-	memcpy(this->destination, destination, length);
+	destinationHandleLen = length;
+	this->dest = (char *)calloc(length, sizeof(char));
+	memcpy(this->dest, dest, length);
 }
 	
-void Message::set_from(const char *source, int length) {
+void Message::sourceHandle(const char *source, int length) {
 	if (this->source != NULL)
 		free(this->source);
 	
-	sourceLength = length;
+	sourceHandleLen = length;
 	this->source = (char *)calloc(length, sizeof(char));
-	memcpy(this->source, source, length );
+	memcpy(this->source, source, length);
 }
 		
-void Message::set_text(const char *text, int length) {
-	if (this->text != NULL)
-		free(this->text);
+void Message::setPayload(const char *payload, int length) {
+	if (this->payload != NULL)
+		free(this->payload);
 	
-	text_length = length;
-	this->text = (char *)calloc(length, sizeof(char));
-	memcpy(this->text, text, length);
+	payloadLen = length;
+	this->payload = (char *)calloc(length, sizeof(char));
+	memcpy(this->payload, payload, length);
 }
 
-void Message::set_int(int to_set) {
+void Message::setIndex(int to_set) {
 	uint32_t *pointer;
 	
-	if (this->text != NULL)
-		free(this->text);
+	if (this->payload != NULL)
+		free(this->payload);
 	
-	text_length = 4;
-	text = (char *)calloc(4, sizeof(char));
-	pointer = (uint32_t *) text;
+	payloadLen = 4;
+	payload = (char *)calloc(4, sizeof(char));
+	pointer = (uint32_t *) payload;
 	pointer[0] = htonl(to_set);	
 }
 
 /*
  * Getter Functions
  */
-uint32_t Message::get_sequence_number() {
-	return sequence_number;
+uint32_t Message::getSequenceNum() {
+	return seqNum;
 }
 
-uint8_t Message::get_flag() {
+uint8_t Message::getFlag() {
 	return flag;
 }
 
-char *Message::get_to() {
-	return destination;
+char *Message::getDestination() {
+	return dest;
 }
 
-int Message::get_to_length() {
-	return destinationLength;
+int Message::getDestinationLen() {
+	return destinationHandleLen;
 }
 
 char *Message::getSource() {
 	return source;
 }
 
-int Message::get_from_length() {
-	return sourceLength;
+int Message::getSourceLen() {
+	return sourceHandleLen;
 }
 
-char *Message::get_text() {
-	return text;
+char *Message::getPayload() {
+	return payload;
 }
 
-int Message::get_length() {
+int Message::getPacketLen() {
 	return total_length;
 }
 
-int Message::get_text_length() {
-	return text_length;
+int Message::getPayloadLen() {
+	return payloadLen;
 }
 
 /*
@@ -221,20 +229,20 @@ void Message::print_bytes(char *bytes, int length) {
 
 
 void Message::print() {
-	print_bytes(source, sourceLength);
+	print_bytes(source, sourceHandleLen);
 	printf(": ");
-	print_bytes(text, text_length);
+	print_bytes(payload, payloadLen);
 }
 
 void Message::print_full() {
 	printf("Message\n");
-	printf("   sequence_number %d\n", sequence_number);
+	printf("   sequence_number %d\n", seqNum);
 	printf("              flag %d\n", flag);
-	printf("         destinationLength %d\n", destinationLength);
-	printf("                destination "); print_bytes(destination, destinationLength); printf("\n");
-	printf("       sourceLength %d\n", sourceLength);
-	printf("              source "); print_bytes(source, sourceLength); printf("\n");
-	printf("       text_length %d\n", text_length);
-	printf("              text "); print_bytes(text, text_length); printf("\n");
+	printf("         destinationHandleLen %d\n", destinationHandleLen);
+	printf("                dest "); print_bytes(dest, destinationHandleLen); printf("\n");
+	printf("       sourceHandleLen %d\n", sourceHandleLen);
+	printf("              from "); print_bytes(source, sourceHandleLen); printf("\n");
+	printf("       text_length %d\n", payloadLen);
+	printf("              payload "); print_bytes(payload, payloadLen); printf("\n");
 	printf("      total_length %d\n", total_length);
 }

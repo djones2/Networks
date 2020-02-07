@@ -13,6 +13,10 @@ cclient: cclient.cpp message.h message.cpp cclient.h
 
 server: server.cpp server.h message.h message.cpp
 	$(COMPILER) $(FLAGS) server.cpp message.cpp -o server
-	
+
+# quiet: server.cpp cclient.cpp message.h message.cpp server_main.cpp
+# 	$(COMPILER) cclient.cpp message.cpp -o cclient
+# 	$(COMPILER) server.cpp server_main.cpp message.cpp -o server
+
 clean:
 	rm cclient server

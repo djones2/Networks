@@ -3,6 +3,7 @@
         "__locale": "c",
         "cctype": "c",
         "locale": "c",
-        "iostream": "cpp"
+        "iostream": "cpp",
+        "sstream": "cpp"
     }
 }

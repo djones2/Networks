@@ -3,56 +3,50 @@
 
 #include "message.h"
 
-/* Class for all server instances */
-class Server
-{
-	/* Server attributes */
+/* Server structure */
+class Server {
 	fd_set read_set;
-	struct timeval wait_time;
-	int port;
-	struct sockaddr_in address;
-	int sequence_number;
-	int socketNum; 
-	int currentClientSocket;
-	int *socketTable;
-	char **clientTable;	
-	int num_open;
-	int num_clients;
+	int seqNum;
+	int socketNum;
+	int currentSocket;
+	int *openConnections;
+	int openSocketCount;
+	int clientCount;
 	int capacity;
-	int highest_fd;
-
+	int lastFD;
+	int port;
+	char **activeClients;
+	struct sockaddr_in address;
+	struct timeval select_timer;
+	
 public: 
-	/* Server setup */
+	/* Main server functions */
 	Server(int argc, char **argv);
 	void setup();
-	void liveServer();
-
-private:
-	void mainServerWrapper(int argc, char **argv);
-	void exceptionWrap(int ex);
-	void mainHelp(int argc, char **argv);
+	void serve();
+	/* Server actions */
+	void initPacketResponse();
+	void addHandle(int fd, char *handle, int length);
+	void broadcastMessage(Message *messagePacket, int msg_size);
+	void closeClient(int fd);
+	/* Packet processing */
+	void processMessage(int fd);	
+	void initPacket(int fd, Message *messagePacket);
+	void forward(int fd, Message *messagePacket, int msg_size);
+	/* Acknowledge/reject actions */
+	void validHandle(char *dest, int destinationHandleLen);
+	void invalidHandle(int fd, char *handle, int length);
+	void listReply(int fd);
+	void handleRequestResponse(int fd, Message *client_msg);
+	void invalidHandleRequest(int fd, Message *client_msg);
+	void invalidDestination(int fd, char *handle, int length);
+	void clientExit(int fd);
 	/* Helper functions */
 	int fdByHandle(char *handle, int length);
 	int findHandle(char *handle, int length);
-	void resize();
-	void print_tables();
-	/* Packet processing */
-	void process_packet(int fd);
-	void initial_packet(int fd, Message *messagePacket);
-	void message_packet(int fd, Message *messagePacket, int payloadLen);
-	void answer();
-	void learn_handle(int fd, char *handle, int length);
-	void broadcast(Message *messagePacket, int payloadLen);
-	void close_connection(int fd);
-	/* Client interactions */
-	void handleCheck(char *destination, int destinationLength);
-	void badHandle(int fd, char *handle, int length);
-	void listCommandLength(int fd);
-	void requestResponse(int fd, Message *clientMessagePacket);
-	void invalidHandleRequest(int fd, Message *clientMessagePacket);
-	void invalidDestination(int fd, char *handle, int length);
-	void exitResponse(int fd);
-
+	void tableSize();
+	void getTables();
+	void serverException(int ex);
 };
 
 #endif
