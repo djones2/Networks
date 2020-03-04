@@ -30,7 +30,6 @@ typedef struct TCP_packet
 } TCP_packet;
 
 /* TCP helper functions */
-void tcp_hand_checksum(TCP_packet *packet);
 void TCP_init(TCP_packet **packet_init, u_char *packet, int size, u_char *ph);
 void print_TCP_packet(TCP_packet *packet);
 void free_TCP_data(TCP_packet **packet);

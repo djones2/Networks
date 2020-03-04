@@ -6,14 +6,7 @@
 #include "TCP_packet.h"
 #include "checksum.h"
 
-void tcp_hand_checksum(TCP_packet *packet)
-{
-    u_char *tcp_check;
-    tcp_check = calloc(packet->frame_length + 12, sizeof(u_char));
-    memcpy(tcp_check, packet->psuedo_header, 12);
-    memcpy(tcp_check + 12, packet->frame, packet->frame_length);
-    packet->chksm = in_cksum((u_int16_t *)tcp_check, packet->frame_length + 12);
-}
+int checksum_flag = 0;
 
 void TCP_init(TCP_packet **packet_init, u_char *packet, int size, u_char *ph)
 {
@@ -23,6 +16,7 @@ void TCP_init(TCP_packet **packet_init, u_char *packet, int size, u_char *ph)
 
     /* Initialize parsable packet */
     result = calloc(1, sizeof(TCP_packet));
+    u_char *checksum;
 
     /* Initialize ethernet packet frame fields */
     result->frame_length = size;
@@ -38,9 +32,10 @@ void TCP_init(TCP_packet **packet_init, u_char *packet, int size, u_char *ph)
     result->ack = ntohl(((u_int32_t *)result->frame)[2]);
     result->window = ntohs(((u_int16_t *)result->frame)[7]);
     result->flags = result->frame[13];
+    checksum = calloc(result->frame_length + 12, sizeof(u_char));
 
     /* Call checksum on assembled packet */
-    result->chksm = in_cksum((u_int16_t *)result->frame, result->frame_length + 12);
+    result->chksm = in_cksum((u_int16_t *)checksum, result->frame_length + 12);
 
     /* Translate our result to the packet-to-be-initialized */
     *packet_init = result;
@@ -141,15 +136,11 @@ void print_TCP_packet(TCP_packet *packet)
     }
 
     printf("\n\t\tWindow Size: %u", packet->window);
-    u_int16_t checksum1;
-    checksum1 = ntohs(((u_int16_t *)(packet->frame))[8]);
-
-    if ((packet->chksm) == checksum1)
-    {
+    u_int16_t checksum1 = ntohs(((u_int16_t *)packet->frame)[8]);
+    if (packet->chksm == 0) {
         printf("\n\t\tChecksum: Incorrect (0x%x)\n", checksum1);
-    }
-    else
-    {
+    } 
+    else {
         printf("\n\t\tChecksum: Correct (0x%x)\n", checksum1);
     }
 }
