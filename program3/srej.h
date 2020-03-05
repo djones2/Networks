@@ -5,7 +5,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/uio.h>
+#include <sys/time.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -16,7 +21,6 @@
 #include "cpe464.h"
 
 // Packet Setup (taken from Hugh Smith's handout)
-#define HEADER_LENGTH 11
 #define MAX_PACKET_SIZE 1410
 #define SIZE_OF_BUF_SIZE 4
 #define FIRST_SEQ_NUM 1
@@ -28,20 +32,32 @@
 
 typedef struct header Header;
 
-struct header { 
+struct header
+{
     uint32_t seq_num;
     uint16_t int_checksum;
     uint8_t flag;
 };
 
-enum FLAG {
-    CRC_ERROR = -1, FILENAME = 1, FILENAME_ACK = 2, DATA_PACKET = 3, RR = 5, SREJ = 6, 
-    RCOPY_INFO = 7, SERVER_INFO = 8, END_OF_FILE = 9, EOF_ACK = 10
+enum FLAG
+{
+    CRC_ERROR = -1,
+    FNAME_GOOD = 8,
+    FNAME_BAD = 9,
+    FNAME = 7,
+    DATA = 3,
+    ACK = 5,
+    END_OF_FILE = 10,
+    EOF_ACK = 11
 };
 
-int retrieveHeader(uint8_t * data_buf, int recv_len, uint8_t * flag, uint32_t * sequence_number);
-int32_t recv_buf(uint8_t * buf, int32_t len, int32_t recv_socket_number, Connection * connection,
-                    uint8_t * flag, uint32_t * sequence_number);
-
+int32_t send_buf(uint8_t *buf, int32_t len, Connection *connection,
+                 uint8_t *flag, uint32_t *sequence_number, uint8_t *packet);
+int createHeader(uint32_t len, uint8_t flag, uint32_t seq_num, uint8_t *packet);
+int32_t recv_buf(uint8_t *buf, int32_t len, int32_t recv_socket_number, Connection *connection,
+                 uint8_t *flag, uint32_t *sequence_number);
+int retrieveHeader(uint8_t *data_buf, int recv_len, uint8_t *flag, uint32_t *sequence_number);
+int processSelect(Connection *client, int *retryCount, int selectTimeoutState, int dataReadyState,
+                  int doneState);
 
 #endif

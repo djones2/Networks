@@ -20,170 +20,10 @@
 #include "libcpe464/networks/network-hooks.h"
 #include "gethostbyname.h"
 
-
-// fix
-int safeRecvfrom(int socketNum, void * buf, int len, int flags, struct sockaddr *srcAddr, int * addrLen)
+int safeGetUdpSocket()
 {
-	int returnValue = 0;
-	if ((returnValue = recvfrom(socketNum, buf, (size_t) len, flags, srcAddr, (socklen_t *) addrLen)) < 0)
-	{
-		perror("recvfrom: ");
-		exit(-1);
-	}
-	
-	return returnValue;
-}
-
-int safeSendto(int socketNum, void * buf, int len, int flags, struct sockaddr *srcAddr, int addrLen)
-{
-	int returnValue = 0;
-	if ((returnValue = sendto(socketNum, buf, (size_t) len, flags, srcAddr, (socklen_t) addrLen)) < 0)
-	{
-		perror("sendto: ");
-		exit(-1);
-	}
-	
-	return returnValue;
-}
-
-int safeRecv(int socketNum, void * buf, int len, int flags)
-{
-	int returnValue = 0;
-	if ((returnValue = recv(socketNum, buf, (size_t) len, flags)) < 0)
-	{
-		perror("recv: ");
-		exit(-1);
-	}
-	
-	return returnValue;
-}
-
-int safeSend(int socketNum, void * buf, int len, int flags)
-{
-	int returnValue = 0;
-	if ((returnValue = send(socketNum, buf, (size_t) len, flags)) < 0)
-	{
-		perror("send: ");
-		exit(-1);
-	}
-	
-	return returnValue;
-}
-
-
-// This function sets the server socket. The function returns the server
-// socket number and prints the port number to the screen.  
-
-int tcpServerSetup(int portNumber)
-{
-	int server_socket= 0;
-	struct sockaddr_in6 server;     
-	socklen_t len= sizeof(server);  
-
-	server_socket= socket(AF_INET6, SOCK_STREAM, 0);
-	if(server_socket < 0)
-	{
-		perror("socket call");
-		exit(1);
-	}
-
-	server.sin6_family= AF_INET6;         		
-	server.sin6_addr = in6addr_any;   
-	server.sin6_port= htons(portNumber);         
-
-	// bind the name (address) to a port 
-	if (bind(server_socket, (struct sockaddr *) &server, sizeof(server)) < 0)
-	{
-		perror("bind call");
-		exit(-1);
-	}
-	
-	// get the port name and print it out
-	if (getsockname(server_socket, (struct sockaddr*)&server, &len) < 0)
-	{
-		perror("getsockname call");
-		exit(-1);
-	}
-
-	if (listen(server_socket, BACKLOG) < 0)
-	{
-		perror("listen call");
-		exit(-1);
-	}
-	
-	printf("Server Port Number %d \n", ntohs(server.sin6_port));
-	
-	return server_socket;
-}
-
-// This function waits for a client to ask for services.  It returns
-// the client socket number.   
-
-int tcpAccept(int server_socket, int debugFlag)
-{
-	struct sockaddr_in6 clientInfo;   
-	int clientInfoSize = sizeof(clientInfo);
-	int client_socket= 0;
-
-	if ((client_socket = accept(server_socket, (struct sockaddr*) &clientInfo, (socklen_t *) &clientInfoSize)) < 0)
-	{
-		perror("accept call");
-		exit(-1);
-	}
-	  
-	if (debugFlag)
-	{
-		printf("Client accepted.  Client IP: %s Client Port Number: %d\n",  
-				getIPAddressString6(clientInfo.sin6_addr.s6_addr), ntohs(clientInfo.sin6_port));
-	}
-	
-
-	return(client_socket);
-}
-
-int tcpClientSetup(char * serverName, char * port, int debugFlag)
-{
-	// This is used by the client to connect to a server using TCP
-	
-	int socket_num;
-	uint8_t * ipAddress = NULL;
-	struct sockaddr_in6 server;      
-	
-	// create the socket
-	if ((socket_num = socket(AF_INET6, SOCK_STREAM, 0)) < 0)
-	{
-		perror("socket call");
-		exit(-1);
-	}
-
-	// setup the server structure
-	server.sin6_family = AF_INET6;
-	server.sin6_port = htons(atoi(port));
-	
-	// get the address of the server 
-	if ((ipAddress = gethostbyname6(serverName, &server)) == NULL)
-	{
-		exit(-1);
-	}
-
-	if(connect(socket_num, (struct sockaddr*)&server, sizeof(server)) < 0)
-	{
-		perror("connect call");
-		exit(-1);
-	}
-
-	if (debugFlag)
-	{
-		printf("Connected to %s IP: %s Port Number: %d\n", serverName, getIPAddressString6(ipAddress), atoi(port));
-	}
-	
-	return socket_num;
-}
-
-int safeGetUdpSocket() {
 	int socketNum = 0;
-	// create the socket
-	if ((socketNum = socket(AF_INET6,SOCK_DGRAM,0)) < 0)
+	if ((socketNum = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 	{
 		perror("safe socket() call error");
 		exit(-1);
@@ -191,21 +31,45 @@ int safeGetUdpSocket() {
 	return socketNum;
 }
 
+int safeSendto(uint8_t *packet, uint32_t len, Connection *to)
+{
+	int send_len = 0;
+	if ((send_len = sendtoErr(to->socket_number, packet, len, 0, (struct sockaddr *)&(to->remote), to->length)) < 0)
+	{
+		perror("sendto: ");
+		exit(-1);
+	}
+	return send_len;
+}
+
+int safeRecvfrom(int recv_sk_num, uint8_t *packet, int len, Connection *from)
+{
+	int recv_len = 0;
+	from->length = sizeof(struct sockaddr_in6);
+
+	if ((recv_len = recvfrom(recv_sk_num, packet, len, 0, (struct sockaddr *)&(from->remote), &from->length)) < 0)
+	{
+		perror("recvfrom: ");
+		exit(-1);
+	}
+	return recv_len;
+}
+
 int udpServerSetup(int portNumber)
 {
 	struct sockaddr_in6 server;
 	int socketNum = 0;
-	int serverAddrLen = 0;	
+	int serverAddrLen = 0;
 
 	socketNum = safeGetUdpSocket();
-	
+
 	// set up the socket
-	server.sin6_family = AF_INET6;    		// internet (IPv6 or IPv4) family
-	server.sin6_addr = in6addr_any ;  		// use any local IP address
-	server.sin6_port = htons(portNumber);   // if 0 = os picks 
+	server.sin6_family = AF_INET6;		  // internet (IPv6 or IPv4) family
+	server.sin6_addr = in6addr_any;		  // use any local IP address
+	server.sin6_port = htons(portNumber); // if 0 = os picks
 
 	// bind the name (address) to a port
-	if (bind(socketNum,(struct sockaddr *) &server, sizeof(server)) < 0)
+	if (bind(socketNum, (struct sockaddr *)&server, sizeof(server)) < 0)
 	{
 		perror("bind() call error");
 		exit(-1);
@@ -213,48 +77,42 @@ int udpServerSetup(int portNumber)
 
 	/* Get the port number */
 	serverAddrLen = sizeof(server);
-	getsockname(socketNum,(struct sockaddr *) &server,  (socklen_t *) &serverAddrLen);
+	getsockname(socketNum, (struct sockaddr *)&server, (socklen_t *)&serverAddrLen);
 	printf("Server using Port #: %d\n", ntohs(server.sin6_port));
 
-	return socketNum;		
-}
-
-int setupUdpClientToServer(struct sockaddr_in6 *server, char * hostName, int portNumber)
-{
-	// currently only setup for IPv4 
-	int socketNum = 0;
-	char ipString[INET6_ADDRSTRLEN];
-	uint8_t * ipAddress = NULL;
-	
-	// create the socket
-	if ((socketNum = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
-	{
-		perror("socket() call error");
-		exit(-1);
-	}
-  	 	
-	if ((ipAddress = gethostbyname6(hostName, server)) == NULL)
-	{
-		exit(-1);
-	}
-	
-	server->sin6_port = ntohs(portNumber);
-	server->sin6_family = AF_INET6;	
-	
-	inet_ntop(AF_INET6, ipAddress, ipString, sizeof(ipString));
-	printf("Server info - IP: %s Port: %d \n", ipString, portNumber);
-		
 	return socketNum;
 }
 
-int select_call(int32_t socket_num, int32_t second_wait, int32_t microseconds, int32_t set_null) {
+int udpClientSetup(char *hostname, int port_num, Connection *connection)
+{
+	memset(&connection->remote, 0, sizeof(struct sockaddr_in6));
+	connection->socket_number = 0;
+	connection->length = sizeof(struct sockaddr_in6);
+	connection->remote.sin6_family = AF_INET6;
+	connection->remote.sin6_port = htons(port_num);
+
+	connection->socket_number = safeGetUdpSocket();
+
+	if (gethostbyname6(hostname, &connection->remote) == NULL)
+	{
+		printf("Host not found: %s\n", hostname);
+		return -1;
+	}
+	printf("Server info - ");
+	printIPv6Info(&connection->remote);
+	return 0;
+}
+
+int select_call(int32_t socket_num, int32_t seconds, int32_t microseconds, int32_t set_null)
+{
 	// This only works on 1 socket
 	fd_set fdvar;
 	struct timeval aTimeOut;
-	struct timeval * timeout = NULL;
+	struct timeval *timeout = NULL;
 
-	if (set_null == NOT_NULL) {
-		aTimeOut.tv_sec = second_wait;
+	if (set_null == NOT_NULL)
+	{
+		aTimeOut.tv_sec = seconds;
 		aTimeOut.tv_usec = microseconds;
 		timeout = &aTimeOut;
 	}
@@ -262,13 +120,24 @@ int select_call(int32_t socket_num, int32_t second_wait, int32_t microseconds, i
 	FD_ZERO(&fdvar);
 	FD_SET(socket_num, &fdvar);
 
-	if (select(socket_num + 1, (fd_set *) &fdvar, (fd_set *) 0, (fd_set *) 0, timeout) < 0) {
+	if (select(socket_num + 1, (fd_set *)&fdvar, (fd_set *)0, (fd_set *)0, timeout) < 0)
+	{
 		perror("select()");
 		exit(-1);
 	}
-	if (FD_ISSET(socket_num, &fdvar)) {
+	if (FD_ISSET(socket_num, &fdvar))
+	{
 		return 1;
-	} else {
+	}
+	else
+	{
 		return 0;
 	}
+}
+
+void printIPv6Infor(struct sockaddr_in6 *client)
+{
+	char ipString[INET6_ADDRSTRLEN];
+	inet_ntop(AF_INET6, &client->sin6_addr, ipString, sizeof(ipString));
+	printf("IP: %s Port: %d \n", ipString, ntohs(client->sin6_port));
 }
