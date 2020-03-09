@@ -81,13 +81,7 @@ void processFile(char * argv[]) {
 			state = recv_data(output_file_fd, &server, &clientSeqNum);
 			break;
 
-		case RECOVERY:
-			state = recovery(&window, output_file_fd);
-			break;
-
 		case DONE:
-			close(output_file_fd);
-			free_window(&window);
 			break;
 
 		default:
@@ -98,7 +92,7 @@ void processFile(char * argv[]) {
 }
 
 STATE start_state(char ** argv, Connection * server, uint32_t * clientSeqNum) {
-	//uint8_t packet[MAX_LEN];
+	uint8_t packet[MAX_LEN];
 	uint8_t buf[MAX_LEN];
 	int fileNameLen = strlen(argv[1]);
 	STATE returnValue = FILENAME;
