@@ -37,7 +37,7 @@ lib:
 check_lib: 
 	@if [ "$(LIBNAME)" = "" ]; then \
 		echo " ";  \
-		echo "Library missing: libcpe464.X.Y.a";  \
+		echo "Library recovery: libcpe464.X.Y.a";  \
 		echo "Need to install the CPE464 library - see polyLearn"; \
 		echo ""; \
 		exit -1; fi

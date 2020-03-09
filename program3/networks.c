@@ -1,6 +1,5 @@
-
-// Hugh Smith April 2017
-// Network code to support TCP/UDP client and server connections
+/* Written by Hugh Smith, copied for Program 3 use.
+	Some functions adopted for similar use case. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,119 +14,129 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <errno.h>
 
 #include "networks.h"
 #include "cpe464.h"
 #include "gethostbyname.h"
 #include "srej.h"
-#include "slidingWindow.h"
-#include "checksum.h"
 
 int safeGetUdpSocket()
 {
-	int socketNum = 0;
-	if ((socketNum = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	int socketNumber = 0;
+
+	if ((socketNumber = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 	{
-		perror("safe socket() call error");
+		perror("socket");
 		exit(-1);
 	}
-	return socketNum;
+	return socketNumber;
 }
 
-int safeSendto(uint8_t *packet, uint32_t len, Connection *to)
+int safeSendTo(Packet *packet, Connection *to)
 {
 	int send_len = 0;
-	if ((send_len = sendtoErr(to->socket_number, packet, len, 0, (struct sockaddr *) &(to->remote), to->length)) < 0)
+	if ((send_len = sendtoErr(to->sk_num, packet->full_packet, packet->size, 0,
+							  (struct sockaddr *)&(to->remote), to->len)) < 0)
 	{
-		perror("sendto: ");
+		perror("safeSendTo: ");
 		exit(-1);
 	}
 	return send_len;
+	/* 	if ((sendingLen = sendtoErr(connection->sk_num, packet.full_packet, packet.size, 0,
+		(struct sockaddr *) &(connection->remote), connection->len)) < 0) {
+		perror("send_buf: ");
+		exit(-1);
+	} */
 }
 
-int safeRecvfrom(int recv_sk_num, uint8_t *packet, int len, Connection *from)
+int udpServerSetup(int portNumber)
+{
+	struct sockaddr_in6 local;
+	int socketNumber = 0; //socket descriptor
+	int len = 0;
+
+	//create the socket
+	socketNumber = safeGetUdpSocket();
+
+	//set up the socket
+	local.sin6_family = AF_INET6;		 //internet family
+	local.sin6_addr = in6addr_any;		 //wild card machine address
+	local.sin6_port = htons(portNumber); // let system choose the port
+
+	//bind the name (address) to a port
+	if (bind(socketNumber, (struct sockaddr *)&local, sizeof(local)) < 0)
+	{
+		perror("udpServerSetup, bind");
+		exit(-1);
+	}
+	len = sizeof(local);
+	getsockname(socketNumber, (struct sockaddr *)&local, (socklen_t *)&len);
+	printf("Server using Port #: %d\n", ntohs(local.sin6_port));
+
+	return socketNumber;
+}
+
+int safeRecvFrom(int recv_sk_num, Packet *packet, Connection *from)
 {
 	int recv_len = 0;
-	from->length = sizeof(struct sockaddr_in6);
-
-	if ((recv_len = recvfrom(recv_sk_num, packet, len, 0, (struct sockaddr *)&(from->remote), &from->length)) < 0)
+	uint32_t remote_len = sizeof(struct sockaddr_in6);
+	if ((recv_len = recvfrom(recv_sk_num, packet->full_packet, MAX_LEN + HEADER_LENGTH,
+							 0, (struct sockaddr *)&(from->remote), &remote_len)) < 0)
 	{
-		perror("recvfrom: ");
+		perror("safeRecvFrom: ");
 		exit(-1);
 	}
 	return recv_len;
 }
 
-int udpServerSetup(int portNumber)
+int udpClientSetup(char *hostname, uint16_t port_num, Connection *connection)
 {
-	struct sockaddr_in6 server;
-	int socketNum = 0;
-	int serverAddrLen = 0;
 
-	socketNum = safeGetUdpSocket();
-
-	// set up the socket
-	server.sin6_family = AF_INET6;		  // internet (IPv6 or IPv4) family
-	server.sin6_addr = in6addr_any;		  // use any local IP address
-	server.sin6_port = htons(portNumber); // if 0 = os picks
-
-	// bind the name (address) to a port
-	if (bindMod(socketNum, (struct sockaddr *)&server, sizeof(server)) < 0)
-	{
-		perror("bind() call error");
-		exit(-1);
-	}
-
-	/* Get the port number */
-	serverAddrLen = sizeof(server);
-	getsockname(socketNum, (struct sockaddr *)&server, (socklen_t *)&serverAddrLen);
-	printf("Server using Port #: %d\n", ntohs(server.sin6_port));
-
-	return socketNum;
-}
-
-int udpClientSetup(char *hostname, int port_num, Connection *connection)
-{
 	memset(&connection->remote, 0, sizeof(struct sockaddr_in6));
-	connection->socket_number = 0;
-	connection->length = sizeof(struct sockaddr_in6);
+	connection->sk_num = 0;
+	connection->len = sizeof(struct sockaddr_in6);
 	connection->remote.sin6_family = AF_INET6;
 	connection->remote.sin6_port = htons(port_num);
 
-	connection->socket_number = safeGetUdpSocket();
+	// create the socket
+	if ((connection->sk_num = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	{
+		perror("udpClientSetup: ");
+		exit(-1);
+	}
 
 	if (gethostbyname6(hostname, &connection->remote) == NULL)
 	{
 		printf("Host not found: %s\n", hostname);
 		return -1;
 	}
-	printf("Server info - ");
-	printIPv6Info(&connection->remote);
 	return 0;
 }
 
 int select_call(int32_t socket_num, int32_t seconds, int32_t microseconds, int32_t set_null)
 {
-	// This only works on 1 socket
+
 	fd_set fdvar;
 	struct timeval aTimeOut;
 	struct timeval *timeout = NULL;
 
 	if (set_null == NOT_NULL)
 	{
-		aTimeOut.tv_sec = seconds;
-		aTimeOut.tv_usec = microseconds;
+		aTimeOut.tv_sec = seconds;		 // set timeout to 1 second
+		aTimeOut.tv_usec = microseconds; // set timeout (in micro-second)
 		timeout = &aTimeOut;
 	}
-	// reset fd's
-	FD_ZERO(&fdvar);
+
+	FD_ZERO(&fdvar); //reset variables
 	FD_SET(socket_num, &fdvar);
 
 	if (select(socket_num + 1, (fd_set *)&fdvar, (fd_set *)0, (fd_set *)0, timeout) < 0)
 	{
-		perror("select()");
+		perror("select_call: ");
 		exit(-1);
 	}
+
 	if (FD_ISSET(socket_num, &fdvar))
 	{
 		return 1;
@@ -136,11 +145,4 @@ int select_call(int32_t socket_num, int32_t seconds, int32_t microseconds, int32
 	{
 		return 0;
 	}
-}
-
-void printIPv6Info(struct sockaddr_in6 *client)
-{
-	char ipString[INET6_ADDRSTRLEN];
-	inet_ntop(AF_INET6, &client->sin6_addr, ipString, sizeof(ipString));
-	printf("IP: %s Port: %d \n", ipString, ntohs(client->sin6_port));
 }

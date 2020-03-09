@@ -1,1 +1,6 @@
-Daniel Jones 9 AM Lab Section
+Daniel Jones 9 AM Lab
+
+For some reason, the RR field on the terminal output from the PacketManager does not
+represent my RR management as my program does. I have a commented out print statement in
+rcopy that managed my RR's while I wrote this program. Other than that, all other 
+requirements are to be met! 

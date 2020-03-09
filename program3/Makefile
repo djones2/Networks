@@ -37,7 +37,7 @@ lib:
 check_lib: 
 	@if [ "$(LIBNAME)" = "" ]; then \
 		echo " ";  \
-		echo "Library missing: libcpe464.X.Y.a";  \
+		echo "Library recovery: libcpe464.X.Y.a";  \
 		echo "Need to install the CPE464 library - see polyLearn"; \
 		echo ""; \
 		exit -1; fi
@@ -60,14 +60,14 @@ echo:
 	@echo "*** Building $@"
 	$(CC) -c $(CFLAGS) $< -o $@ $(LIBS1)
 
-rcopy: rcopy.o networks.o srej.o slidingWindow.o $(HFILES) $(OBJS)
+rcopy: rcopy.o slidingWindowUtil.o srej.o networks.o $(HFILES) $(OBJS)
 	@echo "-------------------------------"
 	@echo "*** Linking $@ with library: $(LIBNAME)... "
 	$(CC) $(CFLAGS) -o $@ rcopy.o $(OBJS) $(LIBNAME) $(LIBS)
 	@echo "*** Linking Complete!"
 	@echo "-------------------------------"
 
-server: server.o networks.o srej.o slidingWindow.o $(HFILES) $(OBJS)
+server: server.o slidingWindowUtil.o srej.o networks.o $(HFILES) $(OBJS)
 	@echo "-------------------------------"
 	@echo "*** Linking $@ with library: $(LIBNAME)... "
 	$(CC) $(CFLAGS) -o $@ server.o $(OBJS) $(LIBNAME) $(LIBS)

@@ -2,7 +2,7 @@
 // Modified to support Mac - added socketMod() to stop socketType
 
 // ============================================================================
-#include "network-hooks.h"
+#include "networks/network-hooks.h"
 #undef fork
 #undef socket
 
@@ -61,7 +61,7 @@ int forkMod(void)
 	
 	if ((returnValue = fork()) == 0)
 	{
-		// in child process - set a next random seed for child process
+		// in child packet - set a next random seed for child packet
 		g_SetsMgr.setUserMode_SeedRand(tempNextSeed);
 		childProcess = 1;
 	}
@@ -99,7 +99,7 @@ int bindMod(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 		}
 		else
 		{    
-			((struct sockaddr_in*)addr)->sin_port = htons(port);
+			((struct sockaddr_in6*)addr)->sin_port = htons(port);
 		}
     }
 
@@ -115,7 +115,7 @@ int bindMod(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 	}
 	else
 	{
-		struct sockaddr_in addr_in;
+		struct sockaddr_in6 addr_in;
 		socklen_t addr_in_len;
 
 		getsockname(sockfd, (sockaddr*)&addr_in, &addr_in_len);
@@ -167,7 +167,7 @@ int selectMod(int nfds,
 	{
 		if (childProcess == 1)
 		{
-			DBG_PRINT(DBG_LEVEL_INFO, " Child process - ");
+			DBG_PRINT(DBG_LEVEL_INFO, " Child packet - ");
 		}
 		
 		DBG_PRINT(DBG_LEVEL_INFO, "Select Timed Out - pid: %d", getpid());

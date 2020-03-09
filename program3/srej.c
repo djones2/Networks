@@ -11,206 +11,106 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <errno.h>
 
-#include "slidingWindow.h"
-#include "srej.h"
+#include "networks.h"
 #include "cpe464.h"
+#include "gethostbyname.h"
 #include "networks.h"
 
-int32_t send_buf(uint8_t *buf, int32_t len, Connection *connection,
-                 uint8_t flag, uint32_t sequence_number, uint8_t *packet)
+// Send a packet at a time. Adopted from origiginal but modified for Packet type.
+int32_t send_buf(uint8_t *data, uint32_t len, Connection *connection, uint8_t flag,
+				 uint32_t seq_num)
 {
-/*     int32_t sentLen = 0;
-    int32_t sendingLen = 0;
-
-    // Packet setup
-    if (len > 0)
-    {
-        memcpy(&packet[sizeof(Header)], buf, len);
-    }
-    sendingLen = createHeader(len, flag, sequence_number, packet);
-    sentLen = safeSendto(packet, sendingLen, connection);
-    return sentLen; */
-    return 0;
-}
-
-// Translated from send_buf but tailored for all packets.
-int32_t send_packet(uint8_t *data, uint32_t size, Connection *connection, uint8_t flag, 
-	uint32_t seq_num) {
 	Packet packet;
-	int32_t sentLen = 0;
-	
+	int32_t sendingLen = 0;
+
+	// Populate fields
 	packet.seq_num = seq_num;
 	packet.flag = flag;
-	packet.packet_size = size + HEADER_LENGTH;
-	
-	memcpy(packet.payload, data, size);
-	
-	createPacket(&packet);
-	
-	if ((sentLen = sendtoErr(connection->socket_number, packet.packet, packet.packet_size, 0,
-		(struct sockaddr *) &(connection->remote), connection->length)) < 0) {
-		perror("sendto err: ");
-		exit(-1);
-	}
-	
-	return sentLen;
+	packet.size = len + HEADER_LENGTH;
+
+	// Copy data, create packet
+	memcpy(packet.data, data, len);
+	create_packet(&packet);
+	// Send packet through the buffer
+	sendingLen = safeSendTo(&packet, connection);
+	// Return length sent
+	return sendingLen;
 }
 
-// Send an additional packet if data buffer is not large enough
-// to send all data in one packet
-int32_t sendAdditionalPacket(Packet *packet, Connection *connection) {
-	int32_t sentLen = 0;
-	
-	if ((sentLen = sendtoErr(connection->socket_number, packet->packet, packet->packet_size, 0,
-		(struct sockaddr *) &(connection->remote), connection->length)) < 0) {
-		perror("sendto err: ");
-		exit(-1);
-	}
-	
-	return sentLen;
-}
-
-// Creates regular header and inserts into packet
-int createHeader(uint32_t len, uint8_t flag, uint32_t seq_num, uint8_t *packet)
+// Create a packet and populate it's fields, ready for sending.
+// Adopted from createHeader
+void create_packet(Packet *packet)
 {
-/*     Header *aHeader = (Header *)packet;
-    uint16_t checksum = 0;
-    // Allocate sequence number
-    seq_num = htonl(seq_num);
-    memcpy(&(aHeader->seq_num), &seq_num, sizeof(seq_num));
-    // Set flag
-    aHeader->flag = flag;
-    // Clear checksum
-    memset(&(aHeader->int_checksum), 0, sizeof(checksum));
-    // Evaluate checksum
-    checksum = in_cksum((unsigned short *)packet, len + sizeof(Header));
-    memcpy(&(aHeader->int_checksum), &checksum, sizeof(checksum));
-    // Return total size
-    return len + sizeof(Header); */
-    return 0;
+	int i;
+	uint8_t *out_packet = packet->full_packet;
+	// clear fields
+	for (i = 0; i < HEADER_LENGTH + MAX_LEN; i++)
+	{
+		out_packet[i] = 0;
+	}
+	// sequence number in network order
+	((uint32_t *)out_packet)[0] = htonl(packet->seq_num);
+	// flag
+	out_packet[6] = packet->flag;
+	// translate the size to network order
+	*((uint32_t *)(out_packet + 7)) = htonl(packet->size);
+	// copy data
+	memcpy(out_packet + HEADER_LENGTH, &packet->data, MAX_LEN);
+	// populate checksum field
+	packet->checksum = in_cksum((uint16_t *)out_packet, packet->size);
+	((int16_t *)out_packet)[2] = packet->checksum;
 }
 
-int32_t recv_buf(uint8_t *buf, int32_t len, int32_t recv_socket_number, Connection *connection,
-                 uint8_t *flag, uint32_t *sequence_number)
+// Send a packet that is already constructed or an RR
+int32_t send_additional_packet(Packet *packet, Connection *connection)
 {
-/*     uint8_t data_buf[MAX_LEN];
-    int32_t recv_len = 0;
-    int32_t dataLen = 0;
+	int32_t sendingLen = 0;
+	// Send the packet constructed via the connection passed
+	sendingLen = safeSendTo(packet, connection);
+	return sendingLen;
+}
 
-    recv_len = safeRecvfrom(recv_socket_number, data_buf, len, connection);
-    dataLen = retrieveHeader(data_buf, recv_len, flag, sequence_number);
-
-    if (dataLen > 0)
-    {
-        memcpy(buf, &data_buf[sizeof(Header)], dataLen);
-    }
-    return dataLen; */
-    return 0;
-} 
-
-// Translated recv_buffer to receive an entire packet. Calls parsePacket to 
-// get different parts of the packet
-int32_t recv_packet(Packet *packet, int32_t recv_sk_num, Connection *connection) {
+// Receive a packet. Changed from retrieving a buffer to a packet
+int32_t recv_buf(Packet *packet, int32_t recv_sk_num, Connection *connection)
+{
 	int32_t recv_len = 0;
-	uint32_t remote_len = sizeof(struct sockaddr_in);
-	
-	if ((recv_len = recvfromErr(recv_sk_num, packet->packet, MAX_LEN + HEADER_LENGTH, 0, 
-		(struct sockaddr *) &(connection->remote), &remote_len)) < 0) {
-		perror("recv_buf, recvfrom");
-		exit(-1);
-	}
-	
-	if (parsePacket(packet) != 0)
+	uint32_t remote_len = sizeof(struct sockaddr_in6);
+	// If less than 0, received a corrupted packet
+	recv_len = safeRecvFrom(recv_sk_num, packet, connection);
+	// Read packet contents
+	if (read_packet(packet) != 0)
+	{
 		return CRC_ERROR;
-	
-	connection->length = remote_len;
-	
+	}
+	// Return received data amount minues header
+	connection->len = remote_len;
 	return recv_len - HEADER_LENGTH;
 }
 
-int retrieveHeader(uint8_t *data_buf, int recv_len, uint8_t *flag, uint32_t *sequence_number)
+// Opposide of creating the packet
+int read_packet(Packet *packet)
 {
-/*     Header *aHeader = (Header *)data_buf;
-    int returnValue = 0;
-
-    if (in_cksum((unsigned short *)data_buf, recv_len) != 0)
-    {
-        returnValue = CRC_ERROR;
-    }
-    else
-    {
-        *flag = aHeader->flag;
-        memcpy(sequence_number, &(aHeader->seq_num), sizeof(aHeader->seq_num));
-        *sequence_number = ntohl(*sequence_number);
-        returnValue = recv_len - sizeof(Header);
-    }
-    return returnValue; */
-    return 0;
-}
-
-int processSelect(Connection *client, int *retryCount, int selectTimeoutState, int dataReadyState,
-                  int doneState)
-{
-    int returnValue = dataReadyState;
-    (*retryCount)++;
-
-    if (*retryCount > MAX_TRIES)
-    {
-        printf("No response for 10 seconds, terminating connection.\n");
-        returnValue = doneState;
-    }
-    else
-    {
-        if (select_call(client->socket_number, SHORT_TIME, 0, NOT_NULL) == 1)
-        {
-            *retryCount = 0;
-            returnValue = dataReadyState;
-        }
-        else
-        {
-            returnValue = selectTimeoutState;
-        }
-    }
-    return returnValue;
-}
-
-void createPacket(Packet *packet) {
-	uint8_t *result = packet->packet;
+	uint8_t *data = packet->full_packet;
 	int i;
-	
-	for (i = 0; i < MAX_LEN + HEADER_LENGTH; i++) {
-		result[i] = 0;
-    }	
-	((uint32_t *)result)[0] = htonl(packet->seq_num);
-	result[6] = packet->flag;
-	*((uint32_t *)(result + 7)) = htonl(packet->packet_size);
-	memcpy(result + 11, &packet->payload, MAX_LEN); 
-	packet->int_checksum = in_cksum((uint16_t *) result, packet->packet_size);
-	((int16_t *)result)[2] = packet->int_checksum;
-}
-
-int parsePacket(Packet *packet) {
-	uint8_t *result = packet->packet;
-	int i;
-	
-    // Construct empty packet
-	for (i = 0; i < MAX_LEN; i++)  {
-		packet->payload[i] = 0;
-    }
-
-    // Copy packet information
-	packet->seq_num = ntohl(((uint32_t *)result)[0]);
-	packet->int_checksum = ntohs(*((int16_t *)(result + 4)));
-	packet->flag = result[6];
-	packet->packet_size = ntohl(*((uint32_t *)(result + 7)));
-	
-    // Size check
-	if (packet->packet_size > MAX_LEN + HEADER_LENGTH) {
+	for (i = 0; i < MAX_LEN; i++)
+	{
+		packet->data[i] = 0;
+	}
+	// bring packet fields to host order for reading
+	packet->seq_num = ntohl(((uint32_t *)data)[0]);
+	// this checksum field
+	packet->checksum = ntohs(*((int16_t *)(data + SIZE_OF_BUF_SIZE)));
+	packet->flag = data[6];
+	packet->size = ntohl(*((uint32_t *)(data + 7)));
+	//crc check
+	if (packet->size > MAX_LEN + HEADER_LENGTH)
+	{
 		return CRC_ERROR;
 	}
-    // Copy data to packet payload
-	memcpy(packet->payload, result + HEADER_LENGTH, packet->packet_size - HEADER_LENGTH);
-	// Return checksum for validity
-    return in_cksum((uint16_t *) result, packet->packet_size);
+	// copy packet data only
+	memcpy(packet->data, data + HEADER_LENGTH, packet->size - HEADER_LENGTH);
+	// return dirty_bit check
+	return in_cksum((uint16_t *)data, packet->size);
 }
